@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Публичные проекты — читать может всё, писать тоже (анонимный пользователь)
+    match /projects/{projectId} {
+      allow read, write: if true;
+    }
+    // Файлы метаданных
+    match /files/{fileId} {
+      allow read, write: if true;
+    }
+  }
+}

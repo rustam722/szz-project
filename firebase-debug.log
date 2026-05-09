@@ -1,0 +1,17 @@
+[debug] [2026-05-09T18:07:25.644Z] ----------------------------------------------------------------------
+[debug] [2026-05-09T18:07:25.645Z] Command:       /usr/local/bin/node /Users/rustam/.npm-global/bin/firebase login:ci
+[debug] [2026-05-09T18:07:25.645Z] CLI Version:   15.10.1
+[debug] [2026-05-09T18:07:25.645Z] Platform:      darwin
+[debug] [2026-05-09T18:07:25.645Z] Node Version:  v24.14.0
+[debug] [2026-05-09T18:07:25.645Z] Time:          Sat May 09 2026 23:07:25 GMT+0500 (Yekaterinburg Standard Time)
+[debug] [2026-05-09T18:07:25.645Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-05-09T18:07:25.646Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[warn] ⚠  Authenticating with a `login:ci` token is deprecated and will be removed in a future major version of `firebase-tools`. Instead, use a service account key with `GOOGLE_APPLICATION_CREDENTIALS`: https://cloud.google.com/docs/authentication/getting-started 
+[info] 
+[info] Visit this URL on this device to log in:
+[info] https://accounts.google.com/o/oauth2/auth?client_id=563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com&scope=email%20openid%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloudplatformprojects.readonly%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Ffirebase%20https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform&response_type=code&state=919064196&redirect_uri=http%3A%2F%2Flocalhost%3A9005
+[info] 
+[info] Waiting for authentication...
+[debug] [2026-05-09T18:07:26.556Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 200
+[debug] [2026-05-09T18:07:26.557Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json {"cloudBuildErrorAfter":1594252800000,"cloudBuildWarnAfter":1590019200000,"defaultNode10After":1594252800000,"minVersion":"3.0.5","node8DeploysDisabledAfter":1613390400000,"node8RuntimeDisabledAfter":1615809600000,"node8WarnAfter":1600128000000}

@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>СЗЗ Инструмент</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="css/main.css">
+<link rel="stylesheet" href="css/pdf-editor.css">
+</head>
+<body>
+
+<!-- ══ ЭКРАН ЗАГРУЗКИ ══ -->
+<div id="loading-screen">
+  <div class="ls-inner">
+    <div class="ls-logo">🗺</div>
+    <div class="ls-title">СЗЗ Инструмент</div>
+    <div class="ls-sub">Загрузка...</div>
+  </div>
+</div>
+
+<!-- ══ ЭКРАН ВХОДА ══ -->
+<div id="auth-screen" style="display:none">
+  <div class="auth-card">
+    <div class="auth-logo">🗺</div>
+    <h1 class="auth-title">СЗЗ Инструмент</h1>
+    <p class="auth-sub">Войдите чтобы сохранять проекты</p>
+    <button class="auth-btn google" onclick="signInGoogle()">
+      <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 0 0 2.38-5.88c0-.57-.05-.66-.15-1.18z"/><path fill="#34A853" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2.01c-.72.48-1.63.77-2.7.77-2.08 0-3.84-1.4-4.47-3.29H1.88v2.07A8 8 0 0 0 8.98 17z"/><path fill="#FBBC05" d="M4.51 10.53A4.8 4.8 0 0 1 4.26 9c0-.53.09-1.04.25-1.53V5.4H1.88A8 8 0 0 0 .98 9c0 1.29.31 2.51.9 3.6l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.58c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 0 0 1.88 5.4L4.51 7.47c.63-1.9 2.39-3.89 4.47-3.89z"/></svg>
+      Войти через Google
+    </button>
+    <div class="auth-divider">или</div>
+    <input class="auth-inp" type="email" id="auth-email" placeholder="Email">
+    <input class="auth-inp" type="password" id="auth-pass" placeholder="Пароль">
+    <div id="auth-error" class="auth-error" style="display:none"></div>
+    <button class="auth-btn primary" onclick="signInEmail()">Войти</button>
+    <button class="auth-btn secondary" onclick="signUpEmail()">Зарегистрироваться</button>
+  </div>
+</div>
+
+<!-- ══ ОСНОВНОЙ ИНТЕРФЕЙС ══ -->
+<div id="app" style="display:none">
+
+  <!-- Топ-бар -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">🗺</div>
+      <span class="tb-title">СЗЗ Инструмент</span>
+    </div>
+    <div class="topbar-center">
+      <!-- Проекты -->
+      <button class="tb-btn" onclick="openProjects()">📁 Проекты</button>
+      <span class="tb-project-name" id="tb-project-name">Новый проект</span>
+      <button class="tb-btn" onclick="saveProject()">💾 Сохранить</button>
+    </div>
+    <div class="topbar-right">
+      <div class="tb-user" id="tb-user">
+        <img class="tb-avatar" id="tb-avatar" src="" alt="">
+        <span id="tb-username"></span>
+      </div>
+      <button class="tb-btn warn" onclick="signOut()">Выйти</button>
+    </div>
+  </div>
+
+  <!-- Основной контент -->
+  <div class="app-body">
+
+    <!-- ── ЛЕВАЯ ПАНЕЛЬ ── -->
+    <div class="sidebar" id="sidebar">
+
+      <!-- Инструменты -->
+      <div class="params">
+        <div class="tool-btns">
+          <button class="tbtn active" id="t-poly"   onclick="setTool('poly')">✏ Полигон</button>
+          <button class="tbtn"        id="t-coords" onclick="setTool('coords')">📍 Координаты</button>
+        </div>
+        <div id="params-poly">
+          <div class="hint">Кликай на карту. Двойной клик — завершить.</div>
+          <div class="prow">
+            <button class="btn" onclick="closePoly()" id="btn-close-poly" disabled>✓ Замкнуть</button>
+            <button class="btn warn" onclick="undoPolyPt()">↩ Отменить</button>
+          </div>
+        </div>
+        <div id="params-coords" style="display:none">
+          <textarea id="coords-input" placeholder="59.123456, 39.654321&#10;59.124000, 39.655000&#10;..."></textarea>
+          <button class="btn" onclick="buildFromCoords()">✓ Построить</button>
+        </div>
+      </div>
+
+      <!-- Параметры СЗЗ -->
+      <div class="params">
+        <div class="prow"><span class="plabel">Буфер СЗЗ (м)</span>
+          <input type="number" id="szz-buffer-m" value="1000" min="10" max="50000">
+        </div>
+        <div class="prow"><span class="plabel">Тип линии</span>
+          <select id="szz-line-type">
+            <option value="solid">Сплошная</option>
+            <option value="dashed" selected>Пунктир</option>
+            <option value="dotted">Точки</option>
+          </select>
+        </div>
+        <div class="prow"><span class="plabel">Толщина СЗЗ</span>
+          <input type="number" id="szz-line-width" value="3" min="1" max="12">
+        </div>
+        <div class="prow"><span class="plabel">Толщина ЗУ</span>
+          <input type="number" id="parcel-line-width" value="2" min="1" max="12">
+        </div>
+        <button class="btn pri" id="btn-gen-szz" onclick="generateSzz()" disabled>⊙ Построить СЗЗ</button>
+      </div>
+
+      <!-- Слои -->
+      <div class="params">
+        <div class="prow" style="justify-content:space-between;margin-bottom:4px">
+          <span style="font-weight:600;color:var(--tx)">Слои</span>
+          <button class="btn warn" style="width:auto;padding:3px 8px;font-size:10px;min-height:0" onclick="clearAll()">✕ Очистить</button>
+        </div>
+        <div class="layer-box" id="layer-box">
+          <div class="empty">Нет слоёв</div>
+        </div>
+      </div>
+
+      <!-- Стиль слоя -->
+      <div id="layer-props-panel" style="display:none" class="params layer-props">
+        <div class="layer-props-title">⚙ Стиль: <span id="layer-props-name"></span></div>
+        <div class="lp-row">
+          <span class="lp-lbl">Заливка</span>
+          <input type="range" id="lp-fill-opacity" min="0" max="100" value="15" oninput="applyLayerProps()">
+          <span class="lp-val" id="lp-fill-val">15%</span>
+          <input type="color" class="lp-color" id="lp-fill-color" value="#f59e0b" oninput="applyLayerProps()">
+        </div>
+        <div class="lp-row">
+          <span class="lp-lbl">Обводка</span>
+          <input type="range" id="lp-stroke-opacity" min="0" max="100" value="100" oninput="applyLayerProps()">
+          <span class="lp-val" id="lp-stroke-val">100%</span>
+          <input type="color" class="lp-color" id="lp-stroke-color" value="#f59e0b" oninput="applyLayerProps()">
+        </div>
+        <div class="lp-row">
+          <span class="lp-lbl">Толщина</span>
+          <input type="range" id="lp-weight" min="1" max="12" value="2" oninput="applyLayerProps()">
+          <span class="lp-val" id="lp-weight-val">2px</span>
+        </div>
+        <div class="lp-row">
+          <span class="lp-lbl">Линия</span>
+          <select id="lp-dash" onchange="applyLayerProps()">
+            <option value="">Сплошная</option>
+            <option value="8,5">Пунктир</option>
+            <option value="2,6">Точки</option>
+            <option value="12,4,2,4">Штрих-пунктир</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Поиск -->
+      <div class="params">
+        <div class="prow" style="margin-bottom:6px">
+          <div class="proxy-dot" id="proxy-dot"></div>
+          <span id="proxy-label" style="font-size:11px;color:var(--tx2)">Проверка...</span>
+          <button class="btn" style="width:auto;padding:3px 8px;font-size:10px;min-height:0;margin-left:auto" onclick="checkProxy()">↻</button>
+        </div>
+        <button class="btn pri" id="btn-search" onclick="searchParcels()" disabled>🔍 Найти ЗУ в СЗЗ</button>
+        <div class="progress-bar" id="progress-bar" style="display:none">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- Результаты -->
+      <div class="params" style="flex:1;display:flex;flex-direction:column;min-height:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:12px;font-weight:600;color:var(--tx)">Найдено: <span id="res-cnt" style="color:var(--acc2)">0</span> ЗУ</span>
+        </div>
+        <div class="res-list" id="res-list">
+          <div class="empty">📍 Найденные участки появятся здесь</div>
+        </div>
+        <div style="display:flex;gap:5px;margin-top:6px">
+          <button class="btn" id="btn-export" onclick="exportCSV()" disabled style="flex:1">⬇ CSV</button>
+          <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Word</button>
+        </div>
+        <button class="btn" onclick="enterPdfMode()" style="margin-top:5px;border-color:#6366f1;color:#a5b4fc;background:#1e1b4b">📄 Карта PDF</button>
+      </div>
+
+      <div class="status-bar" id="status-bar">Готово</div>
+    </div>
+
+    <!-- ── КАРТА ── -->
+    <div class="map-wrap">
+      <div id="map-wrapper">
+        <div id="map"></div>
+        <div class="zoom-rect-overlay" id="zoom-rect-overlay"></div>
+      </div>
+      <div class="parcel-nav" id="parcel-nav">
+        <span style="font-size:11px;color:var(--tx2)">📍</span>
+        <select id="parcel-nav-select" onchange="navToParcel(this.value)">
+          <option value="">— выбрать —</option>
+        </select>
+        <button class="parcel-nav-btn" onclick="document.getElementById('parcel-nav').style.display='none'">✕</button>
+      </div>
+      <div class="map-ctrl">
+        <button class="mbtn" onclick="fitActive()" title="К слою">⊡</button>
+        <button class="mbtn" id="sat-btn" onclick="toggleSat()" title="Подложка">🛰</button>
+        <button class="mbtn" id="zoom-rect-btn" onclick="toggleZoomRect()" title="Зум">⬚</button>
+        <button class="mbtn" id="parcel-nav-btn" onclick="openParcelNav()" title="Навигация">📍</button>
+      </div>
+    </div>
+
+  </div><!-- /app-body -->
+</div><!-- /app -->
+
+<!-- ══ PDF РЕДАКТОР ══ -->
+<div id="pdf-editor" style="display:none">
+  <div id="pdf-canvas-wrap">
+    <div id="pdf-canvas" tabindex="0"></div>
+  </div>
+  <div id="pdf-sidebar">
+    <div id="pdf-toolbar"></div>
+    <div id="pdf-props-panel"></div>
+    <div id="pdf-layers-panel"></div>
+    <div id="pdf-actions"></div>
+  </div>
+</div>
+
+<!-- ══ МОДАЛ ПРОЕКТОВ ══ -->
+<div id="projects-modal" style="display:none">
+  <div class="modal-bg" onclick="closeProjects()"></div>
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2>📁 Мои проекты</h2>
+      <button class="modal-close" onclick="closeProjects()">✕</button>
+    </div>
+    <div class="modal-body">
+      <button class="btn pri" style="margin-bottom:12px" onclick="newProject()">＋ Новый проект</button>
+      <div id="projects-list"><div class="empty">Загрузка...</div></div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="ps-image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
+<input type="file" id="logo-upload-input" accept="image/*" style="display:none" onchange="handleLogoUpload(event)">
+
+<!-- ══ FIREBASE SDK ══ -->
+<script type="module">
+  import { initializeApp }        from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword,
+           createUserWithEmailAndPassword, onAuthStateChanged, signOut as fbSignOut }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+  import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc,
+           serverTimestamp, orderBy, query }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+  const firebaseConfig = {
+    apiKey:            "AIzaSyAuBKgWnLSZeZEyPFo7b8LGq4Jn6IPmci4",
+    authDomain:        "szz-project.firebaseapp.com",
+    projectId:         "szz-project",
+    storageBucket:     "szz-project.firebasestorage.app",
+    messagingSenderId: "491183122752",
+    appId:             "1:491183122752:web:695a8724fa20cf3206f2a5",
+  };
+
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+  const googleProvider = new GoogleAuthProvider();
+
+  let currentUser = null;
+  let currentProjectId = null;
+
+  // ── AUTH ──────────────────────────────────────
+  window.signInGoogle = async () => {
+    try { await signInWithPopup(auth, googleProvider); }
+    catch(e) { showAuthError(e.message); }
+  };
+
+  window.signInEmail = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const pass  = document.getElementById('auth-pass').value;
+    if (!email || !pass) return showAuthError('Заполни email и пароль');
+    try { await signInWithEmailAndPassword(auth, email, pass); }
+    catch(e) { showAuthError('Неверный email или пароль'); }
+  };
+
+  window.signUpEmail = async () => {
+    const email = document.getElementById('auth-email').value.trim();
+    const pass  = document.getElementById('auth-pass').value;
+    if (!email || !pass) return showAuthError('Заполни email и пароль');
+    if (pass.length < 6) return showAuthError('Пароль минимум 6 символов');
+    try { await createUserWithEmailAndPassword(auth, email, pass); }
+    catch(e) { showAuthError('Ошибка регистрации: ' + e.message); }
+  };
+
+  window.signOut = async () => { await fbSignOut(auth); };
+
+  function showAuthError(msg) {
+    const el = document.getElementById('auth-error');
+    el.textContent = msg; el.style.display = 'block';
+    setTimeout(() => el.style.display = 'none', 4000);
+  }
+
+  // ── AUTH STATE ────────────────────────────────
+  onAuthStateChanged(auth, user => {
+    document.getElementById('loading-screen').style.display = 'none';
+    if (user) {
+      currentUser = user;
+      document.getElementById('auth-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'flex';
+      document.getElementById('tb-username').textContent = user.displayName || user.email;
+      const avatar = document.getElementById('tb-avatar');
+      if (user.photoURL) { avatar.src = user.photoURL; avatar.style.display = 'block'; }
+      else avatar.style.display = 'none';
+      initApp();
+    } else {
+      currentUser = null;
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'flex';
+    }
+  });
+
+  // ── PROJECTS ──────────────────────────────────
+  window.openProjects = async () => {
+    document.getElementById('projects-modal').style.display = 'flex';
+    await loadProjects();
+  };
+  window.closeProjects = () => {
+    document.getElementById('projects-modal').style.display = 'none';
+  };
+
+  async function loadProjects() {
+    const list = document.getElementById('projects-list');
+    list.innerHTML = '<div class="empty">Загрузка...</div>';
+    try {
+      const q    = query(collection(db, 'users', currentUser.uid, 'projects'), orderBy('updatedAt', 'desc'));
+      const snap = await getDocs(q);
+      if (snap.empty) { list.innerHTML = '<div class="empty">Нет сохранённых проектов</div>'; return; }
+      list.innerHTML = snap.docs.map(d => {
+        const p = d.data();
+        return `<div class="project-card">
+          <div class="project-card-info">
+            <div class="project-card-name">${p.name || 'Без названия'}</div>
+            <div class="project-card-meta">${p.layerCount || 0} слоёв · ${p.parcelCount || 0} ЗУ · ${_fmtDate(p.updatedAt)}</div>
+          </div>
+          <div class="project-card-actions">
+            <button class="btn" style="width:auto;padding:4px 10px" onclick="loadProject('${d.id}')">Открыть</button>
+            <button class="btn warn" style="width:auto;padding:4px 8px" onclick="deleteProject('${d.id}')">🗑</button>
+          </div>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      list.innerHTML = `<div class="empty">Ошибка: ${e.message}</div>`;
+    }
+  }
+
+  function _fmtDate(ts) {
+    if (!ts) return '';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour:'2-digit', minute:'2-digit' });
+  }
+
+  window.newProject = () => {
+    currentProjectId = null;
+    clearAll();
+    document.getElementById('tb-project-name').textContent = 'Новый проект';
+    closeProjects();
+    setSt('Новый проект создан', 'ok');
+  };
+
+  window.saveProject = async () => {
+    if (!currentUser) return;
+    const name = document.getElementById('tb-project-name').textContent;
+    const projectName = prompt('Название проекта:', name === 'Новый проект' ? '' : name);
+    if (projectName === null) return;
+
+    setSt('Сохранение...', 'spin');
+    try {
+      // Сериализуем слои карты (полигоны без leaflet-объектов)
+      const layers = mapLayers.map(l => ({
+        id: l.id, type: l.type, name: l.name, poly: l.poly,
+        visible: l.visible, color: l.color, _psStyle: l._psStyle || null,
+      }));
+
+      // Сериализуем PDF объекты (без imgSrc base64 — слишком тяжело)
+      const pdfObjs = pdfObjects.map(o => ({
+        ...o, data: { ...o.data, imgSrc: '' },
+      }));
+
+      const projectId = currentProjectId || `proj_${Date.now()}`;
+      await setDoc(doc(db, 'users', currentUser.uid, 'projects', projectId), {
+        name:         projectName || 'Без названия',
+        layers,
+        pdfObjects:   pdfObjs,
+        pdfOrientation,
+        foundParcels: foundParcels.slice(0, 500), // лимит Firestore
+        layerCount:   layers.length,
+        parcelCount:  foundParcels.length,
+        updatedAt:    serverTimestamp(),
+        createdAt:    currentProjectId ? undefined : serverTimestamp(),
+      }, { merge: true });
+
+      currentProjectId = projectId;
+      document.getElementById('tb-project-name').textContent = projectName || 'Без названия';
+      setSt('Проект сохранён ✓', 'ok');
+    } catch(e) {
+      setSt('Ошибка сохранения: ' + e.message, 'err');
+    }
+  };
+
+  window.loadProject = async (id) => {
+    setSt('Загрузка проекта...', 'spin');
+    closeProjects();
+    try {
+      const snap = await getDoc(doc(db, 'users', currentUser.uid, 'projects', id));
+      if (!snap.exists()) { setSt('Проект не найден', 'err'); return; }
+      const p = snap.data();
+
+      clearAll();
+      currentProjectId = id;
+      document.getElementById('tb-project-name').textContent = p.name || 'Без названия';
+
+      // Восстанавливаем слои
+      (p.layers || []).forEach(l => {
+        const ll   = l.poly.map(pt => L.latLng(pt[0], pt[1]));
+        const style = l._psStyle || (l.type === 'szz'
+          ? { color: l.color, fillColor: l.color, fillOpacity: 0.1, weight: 2, dashArray: '8,5' }
+          : { color: l.color, fillColor: l.color, fillOpacity: 0.15, weight: 2 });
+        const layer = L.polygon(ll, style).addTo(map);
+        const restored = { id: l.id, type: l.type, name: l.name, poly: l.poly,
+                           visible: l.visible, color: l.color, _psStyle: l._psStyle, layer };
+        mapLayers.push(restored);
+        if (!l.visible) map.removeLayer(layer);
+      });
+
+      // Восстанавливаем найденные ЗУ
+      foundParcels = p.foundParcels || [];
+      const inside = foundParcels.filter(fp => fp.inP);
+      const cross  = foundParcels.filter(fp => !fp.inP);
+      foundParcels.forEach(fp => addParcelLayer(fp));
+      if (foundParcels.length) renderResults(inside, cross);
+
+      // Восстанавливаем PDF объекты
+      pdfObjects = p.pdfObjects || [];
+      pdfOrientation = p.pdfOrientation || 'landscape';
+
+      // Фит на слои
+      if (mapLayers.length) {
+        const allBounds = mapLayers.map(l => l.layer.getBounds());
+        const combined  = allBounds.reduce((b, bb) => b.extend(bb));
+        map.fitBounds(combined, { padding: [30,30] });
+      }
+
+      renderLayers(); updateButtons();
+      document.getElementById('btn-export').disabled      = !foundParcels.length;
+      document.getElementById('btn-export-word').disabled = !foundParcels.length;
+      document.getElementById('res-cnt').textContent      = inside.length;
+      setSt(`Проект «${p.name}» загружен`, 'ok');
+    } catch(e) {
+      setSt('Ошибка загрузки: ' + e.message, 'err');
+      console.error(e);
+    }
+  };
+
+  window.deleteProject = async (id) => {
+    if (!confirm('Удалить проект?')) return;
+    await deleteDoc(doc(db, 'users', currentUser.uid, 'projects', id));
+    loadProjects();
+  };
+
+  // Публичная функция сохранения (для вызова из других модулей)
+  window._getCurrentUser = () => currentUser;
+</script>
+
+<!-- ══ ОСНОВНЫЕ СКРИПТЫ ══ -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/map.js"></script>
+<script src="js/search.js"></script>
+<script src="js/pdf-editor.js"></script>
+<script src="js/export.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
