@@ -4,28 +4,32 @@
 
 'use strict';
 
-// ── Прокси ───────────────────────────────────────
-// Основной: Firebase Cloud Function (работает на Firebase Hosting)
-//   /api/** — rewrites в firebase.json направляют на Cloud Function
-// Резерв: публичные CORS-прокси (если Firebase недоступен / GitHub Pages)
+// ── Прокси (приоритет) ────────────────────────────
+// 1. LOCAL  — локальный proxy.py на 127.0.0.1:8765 (python3 proxy.py)
+// 2. FIREBASE — Firebase Cloud Function /api (firebase deploy)
+// 3. CORS   — публичные CORS-прокси (резерв без бэкенда)
+const LOCAL_PROXY    = 'http://127.0.0.1:8765';
 const FIREBASE_PROXY = '/api';
-const PKK_API = 'https://pkk.rosreestr.ru/api';
-const CORS_PROXIES = [
-  'https://corsproxy.io/?',
-  'https://api.allorigins.win/raw?url=',
-];
+const PKK_API        = 'https://pkk.rosreestr.ru/api';
+const CORS_PROXIES   = ['https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='];
 
-// 'firebase' | 'cors:<url>' | null
+// 'local' | 'firebase' | 'cors:<url>' | null
 let _proxyMode = null;
 
 async function _detectProxy() {
-  // 1. Попробовать Firebase Cloud Function /api/ping
+  // 1. Локальный proxy.py (python3 proxy.py → 127.0.0.1:8765)
+  try {
+    const r = await fetchSafe(`${LOCAL_PROXY}/ping`, 2000);
+    if (r.ok) { const d = await r.json(); if (d && d.ok) { _proxyMode = 'local'; return true; } }
+  } catch(e) {}
+
+  // 2. Firebase Cloud Function
   try {
     const r = await fetchSafe(`${FIREBASE_PROXY}/ping`, 4000);
     if (r.ok) { const d = await r.json(); if (d && d.ok) { _proxyMode = 'firebase'; return true; } }
   } catch(e) {}
 
-  // 2. Прямой запрос к ПКК через публичный CORS-прокси
+  // 3. Публичный CORS-прокси
   const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
   for (const p of CORS_PROXIES) {
     try {
@@ -48,7 +52,8 @@ async function checkProxy() {
   const ok = await _detectProxy();
   if (ok) {
     dot.className = 'proxy-dot ok';
-    label.textContent = _proxyMode === 'firebase' ? 'Сервер подключён ✓' : 'ПКК доступен (резерв) ✓';
+    const labels = { local: 'Локальный прокси ✓', firebase: 'Сервер подключён ✓' };
+    label.textContent = labels[_proxyMode] || 'ПКК доступен (резерв) ✓';
   } else {
     dot.className = 'proxy-dot err';
     label.textContent = 'Сервер недоступен';
@@ -61,22 +66,30 @@ async function fetchTile(minLat, maxLat, minLon, maxLon) {
     if (!ok) throw new Error('Сервер недоступен');
   }
 
-  if (_proxyMode === 'firebase') {
-    // Firebase Cloud Function: /api/pkk?bbox=lon1,lat1,lon2,lat2&limit=400
-    const url = `${FIREBASE_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
+  if (_proxyMode === 'local') {
+    // proxy.py: GET /pkk?bbox=lon1,lat1,lon2,lat2&limit=400
+    const url = `${LOCAL_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
     const r   = await fetchSafe(url, 30000);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    return data.features || [];
-  } else {
-    // CORS-прокси → напрямую в ПКК
-    const corsProxy = _proxyMode.replace('cors:', '');
-    const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
-    const r   = await fetchSafe(corsProxy + encodeURIComponent(pkk), 30000);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) { _proxyMode = null; throw new Error(`proxy.py HTTP ${r.status}`); }
     const data = await r.json();
     return data.features || [];
   }
+
+  if (_proxyMode === 'firebase') {
+    const url = `${FIREBASE_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
+    const r   = await fetchSafe(url, 30000);
+    if (!r.ok) { _proxyMode = null; throw new Error(`Firebase HTTP ${r.status}`); }
+    const data = await r.json();
+    return data.features || [];
+  }
+
+  // CORS-прокси
+  const corsProxy = _proxyMode.replace('cors:', '');
+  const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
+  const r   = await fetchSafe(corsProxy + encodeURIComponent(pkk), 30000);
+  if (!r.ok) { _proxyMode = null; throw new Error(`CORS HTTP ${r.status}`); }
+  const data = await r.json();
+  return data.features || [];
 }
 
 async function searchParcels() {
