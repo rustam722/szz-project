@@ -1047,19 +1047,21 @@ function togglePdfMapSat() {
 function togglePdfMapDrag() {
   if (!pdfMap) return;
   pdfMapDrag = !pdfMapDrag;
+  const mapEl = document.getElementById('pdf-map');
   if (pdfMapDrag) {
     pdfMap.dragging.enable();
     pdfMap.scrollWheelZoom.enable();
     pdfMap.doubleClickZoom.enable();
     pdfMap.touchZoom.enable();
-    document.getElementById('pdf-map').style.cursor = 'grab';
+    if (mapEl) { mapEl.style.cursor = 'grab'; mapEl.style.pointerEvents = ''; }
+    setPdfTool('select');
     setSt('Режим перемещения карты — двигай и масштабируй колесом мыши', 'ok');
   } else {
     pdfMap.dragging.disable();
     pdfMap.scrollWheelZoom.disable();
     pdfMap.doubleClickZoom.disable();
     pdfMap.touchZoom.disable();
-    document.getElementById('pdf-map').style.cursor = '';
+    if (mapEl) { mapEl.style.cursor = ''; }
     setSt('Карта зафиксирована', 'ok');
   }
   const btn = document.getElementById('pdf-drag-btn');
@@ -1108,8 +1110,8 @@ function _buildLeftToolbar() {
     <button ${T('freehand')} id="pst-freehand" data-tip="Карандаш (F)" onclick="setPdfTool('freehand')" style="font-size:16px">✏</button>
     <button ${T('polygon-shape')} id="pst-polygon-shape" data-tip="Многоугольник" onclick="setPdfTool('polygon-shape')" style="font-size:15px">⬠</button>
     <div class="ps-ltool-sep"></div>
-    <button ${T('callout')} id="pst-callout" data-tip="Выноска — 1й клик=острие, 2й=бокс" onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
-    <button class="ps-ltool" data-tip="Выноска с полочкой" onclick="createPdfObj('leader',{name:'Выноска-полочка'})" style="font-size:15px">⌐</button>
+    <button ${T('callout')} id="pst-callout" data-tip="Выноска-облако — 1й клик=острие, 2й=бокс" onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
+    <button ${T('leader')} id="pst-leader" data-tip="Выноска с полочкой — клик на объект, потяни к тексту" onclick="setPdfTool('leader')" style="font-size:15px">⌐</button>
     <div class="ps-ltool-sep"></div>
     <button class="ps-ltool" data-tip="Легенда" onclick="addPdfLegend()">≡</button>
     <button class="ps-ltool" data-tip="Масштаб" onclick="addPdfScale()" style="font-size:13px">📏</button>
@@ -1210,6 +1212,14 @@ function setPdfTool(t) {
   if (btn) btn.classList.add('active');
   const canvas = document.getElementById('pdf-canvas');
   canvas.style.cursor = t === 'select' ? 'default' : 'crosshair';
+
+  // Когда активен инструмент рисования — #pdf-map не должен перехватывать события мыши,
+  // иначе поиск target.closest('#pdf-map') блокирует pointerdown на canvas
+  const mapEl = document.getElementById('pdf-map');
+  if (mapEl) {
+    const isDrawing = t !== 'select' && t !== 'image';
+    mapEl.style.pointerEvents = isDrawing ? 'none' : '';
+  }
 }
 
 // ── Создание объекта ──────────────────────────────
@@ -1227,7 +1237,7 @@ const OBJ_DEFAULTS = {
   path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
   bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
   callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:false, strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
-  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left', radius:0, shadow:false, strokeColor:'#0f172a', strokeW:2, content:'Подпись объекта', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left', radius:0, shadow:false, strokeColor:'#0f172a', strokeW:1.5, content:'Подпись', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
 };
 
 function _typeName(type) {
@@ -1265,7 +1275,7 @@ function _renderObj(obj) {
   }
 
   const d = obj.data;
-  const _isSvgType = ['path','bezier','north'].includes(obj.type);
+  const _isSvgType = ['path','bezier','north','callout','leader'].includes(obj.type);
   el.style.cssText = `
     position:absolute;
     left:${d.x}px; top:${d.y}px;
@@ -1688,10 +1698,21 @@ function _initCanvasDrawing() {
 
     _drawGhost.remove(); _drawGhost = null; _drawStart = null;
 
-    if (w < 8 && h < 8) { // просто клик — текст
+    if (w < 8 && h < 8) { // просто клик
       if (pdfTool === 'text') {
         createPdfObj('text', { x: Math.round(cx - 110), y: Math.round(cy - 26) });
+      } else if (pdfTool === 'leader') {
+        // Клик = острие (arrowhead). Полочка автоматически над ним
+        const bw = 170, bh = 46;
+        const bx = Math.round(cx - bw / 2);
+        const by = Math.round(cy - bh - 60);
+        createPdfObj('leader', { x: bx, y: by, w: bw, h: bh,
+          tailX: Math.round(cx), tailY: Math.round(cy) });
       }
+    } else if (pdfTool === 'leader') {
+      // Drag = область текстового блока. Острие под центром
+      createPdfObj('leader', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
+        tailX: Math.round(x + w / 2), tailY: Math.round(y + h + 60) });
     } else {
       createPdfObj(pdfTool, { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
     }
