@@ -583,21 +583,22 @@
 /* Хендлы изменения размера — 8 точек вокруг объекта */
 .ps-handle {
   position: absolute;
-  width: 8px; height: 8px;
+  width: 14px; height: 14px;
   background: #3b82f6;
-  border: 1.5px solid #fff;
-  border-radius: 1px;
+  border: 2px solid #fff;
+  border-radius: 3px;
   z-index: 10;
   pointer-events: all;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
 }
-.ps-handle[data-h="nw"] { top: -4px; left: -4px; cursor: nwse-resize; }
-.ps-handle[data-h="n"]  { top: -4px; left: calc(50% - 4px); cursor: ns-resize; }
-.ps-handle[data-h="ne"] { top: -4px; right: -4px; cursor: nesw-resize; }
-.ps-handle[data-h="e"]  { top: calc(50% - 4px); right: -4px; cursor: ew-resize; }
-.ps-handle[data-h="se"] { bottom: -4px; right: -4px; cursor: nwse-resize; }
-.ps-handle[data-h="s"]  { bottom: -4px; left: calc(50% - 4px); cursor: ns-resize; }
-.ps-handle[data-h="sw"] { bottom: -4px; left: -4px; cursor: nesw-resize; }
-.ps-handle[data-h="w"]  { top: calc(50% - 4px); left: -4px; cursor: ew-resize; }
+.ps-handle[data-h="nw"] { top: -7px; left: -7px; cursor: nwse-resize; }
+.ps-handle[data-h="n"]  { top: -7px; left: calc(50% - 7px); cursor: ns-resize; }
+.ps-handle[data-h="ne"] { top: -7px; right: -7px; cursor: nesw-resize; }
+.ps-handle[data-h="e"]  { top: calc(50% - 7px); right: -7px; cursor: ew-resize; }
+.ps-handle[data-h="se"] { bottom: -7px; right: -7px; cursor: nwse-resize; }
+.ps-handle[data-h="s"]  { bottom: -7px; left: calc(50% - 7px); cursor: ns-resize; }
+.ps-handle[data-h="sw"] { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.ps-handle[data-h="w"]  { top: calc(50% - 7px); left: -7px; cursor: ew-resize; }
 
 /* Объект «Текст» */
 .ps-obj-text {

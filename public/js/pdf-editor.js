@@ -600,7 +600,8 @@ function _initCanvasZoomWheel() {
     // Колесо по фону холста — зум редактора
     if (e.target.closest('#pdf-map') || e.target.closest('.inset-leaflet') || e.target.closest('.ps-obj')) return;
     e.preventDefault();
-    zoomCanvas(e.deltaY < 0 ? 0.1 : -0.1);
+    const step = e.altKey ? 0.03 : 0.1; // Alt = плавный зум
+    zoomCanvas(e.deltaY < 0 ? step : -step);
   }, { passive: false });
 }
 

@@ -34,7 +34,19 @@ function initMap() {
     center: [62.0, 74.0],
     zoom: 10,
     zoomControl: true,
+    wheelPxPerZoomLevel: 80,   // чуть плавнее обычный зум
+    zoomSnap: 0.1,             // шаг зума 0.1 (вместо 1)
+    zoomDelta: 0.5,            // кнопки +/- тоже плавнее
   });
+
+  // Alt + колесо → очень плавное приближение/отдаление
+  document.getElementById('map').addEventListener('wheel', e => {
+    if (!e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const delta = e.deltaY > 0 ? -0.15 : 0.15;
+    map.setZoom(map.getZoom() + delta, { animate: true });
+  }, { passive: false, capture: true });
 
   osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap',
