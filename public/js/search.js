@@ -5,31 +5,43 @@
 'use strict';
 
 // ── Прокси (приоритет) ────────────────────────────
-// 1. LOCAL  — локальный proxy.py на 127.0.0.1:8765 (python3 proxy.py)
-// 2. FIREBASE — Firebase Cloud Function /api (firebase deploy)
-// 3. CORS   — публичные CORS-прокси (резерв без бэкенда)
+// 1. LOCAL    — локальный proxy.py на 127.0.0.1:8765 (python3 proxy.py)
+// 2. CF       — Cloudflare Worker (бесплатно, всегда онлайн)
+// 3. FIREBASE — Firebase Cloud Function /api (firebase deploy, Blaze plan)
+// 4. CORS     — публичные CORS-прокси (резерв)
+
 const LOCAL_PROXY    = 'http://127.0.0.1:8765';
+// ▼ После деплоя Cloudflare Worker вставь сюда свой URL:
+const CF_WORKER      = 'https://pkk-proxy.YOUR_SUBDOMAIN.workers.dev';
 const FIREBASE_PROXY = '/api';
 const PKK_API        = 'https://pkk.rosreestr.ru/api';
 const CORS_PROXIES   = ['https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='];
 
-// 'local' | 'firebase' | 'cors:<url>' | null
+// 'local' | 'cf' | 'firebase' | 'cors:<url>' | null
 let _proxyMode = null;
 
+async function _pingOk(url, timeout) {
+  try {
+    const r = await fetchSafe(url, timeout);
+    if (!r.ok) return false;
+    const d = await r.json();
+    return !!(d && d.ok);
+  } catch(e) { return false; }
+}
+
 async function _detectProxy() {
-  // 1. Локальный proxy.py (python3 proxy.py → 127.0.0.1:8765)
-  try {
-    const r = await fetchSafe(`${LOCAL_PROXY}/ping`, 2000);
-    if (r.ok) { const d = await r.json(); if (d && d.ok) { _proxyMode = 'local'; return true; } }
-  } catch(e) {}
+  // 1. Локальный proxy.py
+  if (await _pingOk(`${LOCAL_PROXY}/ping`, 2000)) { _proxyMode = 'local'; return true; }
 
-  // 2. Firebase Cloud Function
-  try {
-    const r = await fetchSafe(`${FIREBASE_PROXY}/ping`, 4000);
-    if (r.ok) { const d = await r.json(); if (d && d.ok) { _proxyMode = 'firebase'; return true; } }
-  } catch(e) {}
+  // 2. Cloudflare Worker (если настроен — не содержит YOUR_SUBDOMAIN)
+  if (!CF_WORKER.includes('YOUR_SUBDOMAIN')) {
+    if (await _pingOk(`${CF_WORKER}/ping`, 5000)) { _proxyMode = 'cf'; return true; }
+  }
 
-  // 3. Публичный CORS-прокси
+  // 3. Firebase Cloud Function
+  if (await _pingOk(`${FIREBASE_PROXY}/ping`, 4000)) { _proxyMode = 'firebase'; return true; }
+
+  // 4. Публичный CORS-прокси
   const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
   for (const p of CORS_PROXIES) {
     try {
@@ -52,7 +64,11 @@ async function checkProxy() {
   const ok = await _detectProxy();
   if (ok) {
     dot.className = 'proxy-dot ok';
-    const labels = { local: 'Локальный прокси ✓', firebase: 'Сервер подключён ✓' };
+    const labels = {
+      local:    'Локальный прокси ✓',
+      cf:       'Cloudflare Worker ✓',
+      firebase: 'Сервер подключён ✓',
+    };
     label.textContent = labels[_proxyMode] || 'ПКК доступен (резерв) ✓';
   } else {
     dot.className = 'proxy-dot err';
@@ -60,30 +76,24 @@ async function checkProxy() {
   }
 }
 
+async function _fetchPkk(baseUrl, minLat, maxLat, minLon, maxLon) {
+  const url = `${baseUrl}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
+  const r   = await fetchSafe(url, 30000);
+  if (!r.ok) { _proxyMode = null; throw new Error(`HTTP ${r.status}`); }
+  const data = await r.json();
+  return data.features || [];
+}
+
 async function fetchTile(minLat, maxLat, minLon, maxLon) {
   if (!_proxyMode) {
-    const ok = await _detectProxy();
-    if (!ok) throw new Error('Сервер недоступен');
+    if (!await _detectProxy()) throw new Error('Сервер недоступен');
   }
 
-  if (_proxyMode === 'local') {
-    // proxy.py: GET /pkk?bbox=lon1,lat1,lon2,lat2&limit=400
-    const url = `${LOCAL_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
-    const r   = await fetchSafe(url, 30000);
-    if (!r.ok) { _proxyMode = null; throw new Error(`proxy.py HTTP ${r.status}`); }
-    const data = await r.json();
-    return data.features || [];
-  }
+  if (_proxyMode === 'local')    return _fetchPkk(LOCAL_PROXY, minLat, maxLat, minLon, maxLon);
+  if (_proxyMode === 'cf')       return _fetchPkk(CF_WORKER,   minLat, maxLat, minLon, maxLon);
+  if (_proxyMode === 'firebase') return _fetchPkk(FIREBASE_PROXY, minLat, maxLat, minLon, maxLon);
 
-  if (_proxyMode === 'firebase') {
-    const url = `${FIREBASE_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
-    const r   = await fetchSafe(url, 30000);
-    if (!r.ok) { _proxyMode = null; throw new Error(`Firebase HTTP ${r.status}`); }
-    const data = await r.json();
-    return data.features || [];
-  }
-
-  // CORS-прокси
+  // CORS-прокси (прямой запрос к ПКК)
   const corsProxy = _proxyMode.replace('cors:', '');
   const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
   const r   = await fetchSafe(corsProxy + encodeURIComponent(pkk), 30000);
