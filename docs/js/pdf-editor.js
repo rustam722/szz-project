@@ -22,6 +22,9 @@ let pdfOrientation = 'landscape'; // 'portrait' | 'landscape'
 let pdfMap       = null; // отдельная карта внутри pdf-canvas
 let _drawGhost   = null;
 let _drawStart   = null;
+let pdfMapSat    = false; // спутник/схема для pdf-карты
+let pdfMapDrag   = false; // режим перемещения карты
+let _pdfTile     = null;  // текущий тайловый слой pdf-карты
 
 const CANVAS_W_L = 1123; // landscape
 const CANVAS_H_L = 794;
@@ -83,11 +86,13 @@ function _initPdfMap() {
   });
 
   // Та же подложка что на основной карте
+  pdfMapSat = useSat;
   if (useSat) {
-    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 }).addTo(pdfMap);
+    _pdfTile = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 });
   } else {
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(pdfMap);
+    _pdfTile = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 });
   }
+  _pdfTile.addTo(pdfMap);
 
   // Копируем слои (полигоны)
   mapLayers.forEach(l => {
@@ -102,6 +107,54 @@ function _initPdfMap() {
 
   // Масштаб
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(pdfMap);
+}
+
+// ── Управление картой внутри PDF ─────────────────
+function togglePdfMapSat() {
+  if (!pdfMap) return;
+  if (_pdfTile) pdfMap.removeLayer(_pdfTile);
+  pdfMapSat = !pdfMapSat;
+  _pdfTile = pdfMapSat
+    ? L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 })
+    : L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 });
+  _pdfTile.addTo(pdfMap);
+  const btn = document.getElementById('pdf-sat-btn');
+  if (btn) { btn.textContent = pdfMapSat ? '🗺 Схема' : '🛰 Спутник'; btn.classList.toggle('active', pdfMapSat); }
+}
+
+function togglePdfMapDrag() {
+  if (!pdfMap) return;
+  pdfMapDrag = !pdfMapDrag;
+  if (pdfMapDrag) {
+    pdfMap.dragging.enable();
+    pdfMap.scrollWheelZoom.enable();
+    pdfMap.doubleClickZoom.enable();
+    pdfMap.touchZoom.enable();
+    document.getElementById('pdf-map').style.cursor = 'grab';
+    setSt('Режим перемещения карты — двигай и масштабируй колесом мыши', 'ok');
+  } else {
+    pdfMap.dragging.disable();
+    pdfMap.scrollWheelZoom.disable();
+    pdfMap.doubleClickZoom.disable();
+    pdfMap.touchZoom.disable();
+    document.getElementById('pdf-map').style.cursor = '';
+    setSt('Карта зафиксирована', 'ok');
+  }
+  const btn = document.getElementById('pdf-drag-btn');
+  if (btn) { btn.textContent = pdfMapDrag ? '🔒 Зафикс.' : '✋ Двигать'; btn.classList.toggle('active', pdfMapDrag); }
+}
+
+function fitPdfMapToLayer() {
+  if (!pdfMap) return;
+  const targets = getActiveLayer()
+    ? [getActiveLayer()]
+    : mapLayers;
+  const valid = targets.filter(l => l.layer && l.layer.getBounds);
+  if (!valid.length) { setSt('Нет слоёв для позиционирования', 'err'); return; }
+  let bounds = valid[0].layer.getBounds();
+  valid.slice(1).forEach(l => bounds.extend(l.layer.getBounds()));
+  pdfMap.fitBounds(bounds, { padding: [24, 24] });
+  setSt('Карта PDF центрирована на участке ✓', 'ok');
 }
 
 // ── UI редактора ──────────────────────────────────
@@ -137,6 +190,19 @@ function _buildToolbar() {
         <input type="checkbox" id="pdf-no-fill-zu"  onchange="toggleFills()"> Убрать заливку ЗУ
       </label>
     </div>
+    <div class="ps-tool-sep" style="flex-basis:100%;height:0;margin:4px 0 2px"></div>
+    <div style="width:100%;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.6px;padding:0 2px 3px">🗺 Настройка карты</div>
+    <button class="pdf-map-ctrl ${pdfMapSat?'active':''}" id="pdf-sat-btn"
+            onclick="togglePdfMapSat()" title="Переключить спутник / схему">
+      ${pdfMapSat ? '🗺 Схема' : '🛰 Спутник'}
+    </button>
+    <button class="pdf-map-ctrl ${pdfMapDrag?'active':''}" id="pdf-drag-btn"
+            onclick="togglePdfMapDrag()" title="Двигать и масштабировать карту внутри PDF">
+      ${pdfMapDrag ? '🔒 Зафикс.' : '✋ Двигать'}
+    </button>
+    <button class="pdf-map-ctrl" onclick="fitPdfMapToLayer()" title="Авто-позиционирование на активном участке">
+      🎯 На участок
+    </button>
   `;
 }
 
@@ -435,6 +501,8 @@ function _initCanvasDrawing() {
 
   canvas.addEventListener('pointerdown', e => {
     if (pdfTool === 'select' || pdfTool === 'image') return;
+    if (pdfMapDrag) return; // в режиме перемещения — отдаём управление Leaflet
+    if (e.target.closest('#pdf-map')) return; // клик по карте — не рисуем
     if (e.target.classList.contains('ps-obj') || e.target.closest('.ps-obj')) return;
     e.preventDefault();
 
