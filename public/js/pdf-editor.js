@@ -26,6 +26,18 @@ let pdfMapSat    = false; // спутник/схема для pdf-карты
 let pdfMapDrag   = false; // режим перемещения карты
 let _pdfTile     = null;  // текущий тайловый слой pdf-карты
 
+// ── Snap / Align ──────────────────────────────────
+let _snapGuides  = [];    // активные направляющие
+let _snapEnabled = true;  // включён ли магнит
+const SNAP_DIST  = 10;    // пикселей для притяжения
+
+// ── Инсет-карты (лупа) ───────────────────────────
+const _insetMaps = {};    // id → L.map
+
+// ── Undo / Redo ───────────────────────────────────
+let _undoStack   = [];
+let _redoStack   = [];
+
 const CANVAS_W_L = 1123; // landscape
 const CANVAS_H_L = 794;
 const CANVAS_W_P = 794;  // portrait
@@ -109,6 +121,171 @@ function _initPdfMap() {
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(pdfMap);
 }
 
+// ── Snap / Притяжение ─────────────────────────────
+function _clearSnapGuides() {
+  _snapGuides.forEach(g => g.remove());
+  _snapGuides = [];
+}
+
+function _showGuide(dir, pos) {
+  const canvas = document.getElementById('pdf-canvas');
+  const g = document.createElement('div');
+  g.className = 'snap-guide snap-guide-' + dir;
+  if (dir === 'v') { g.style.cssText = `position:absolute;left:${pos}px;top:0;width:1px;height:100%;background:#f97316;opacity:.8;pointer-events:none;z-index:9999`; }
+  else             { g.style.cssText = `position:absolute;top:${pos}px;left:0;height:1px;width:100%;background:#f97316;opacity:.8;pointer-events:none;z-index:9999`; }
+  canvas.appendChild(g);
+  _snapGuides.push(g);
+}
+
+function _snapObject(obj, nx, ny) {
+  if (!_snapEnabled) return { x: nx, y: ny };
+  _clearSnapGuides();
+  const canvas = document.getElementById('pdf-canvas');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  const d = obj.data;
+
+  // Опорные точки объекта
+  const pts = [
+    { ox: nx,              oy: ny },
+    { ox: nx + d.w / 2,   oy: ny + d.h / 2 },
+    { ox: nx + d.w,        oy: ny + d.h },
+  ];
+
+  // Цели: центр и края холста
+  const snapX = [0, Math.round(W / 2), W];
+  const snapY = [0, Math.round(H / 2), H];
+
+  // Цели от других объектов
+  pdfObjects.filter(o => o.id !== obj.id && o.visible).forEach(o => {
+    snapX.push(o.data.x, Math.round(o.data.x + o.data.w / 2), o.data.x + o.data.w);
+    snapY.push(o.data.y, Math.round(o.data.y + o.data.h / 2), o.data.y + o.data.h);
+  });
+
+  let sx = nx, sy = ny;
+  const offsets = [0, d.w / 2, d.w];
+
+  for (let i = 0; i < 3; i++) {
+    for (const tv of snapX) {
+      if (Math.abs(nx + offsets[i] - tv) < SNAP_DIST) { sx = Math.round(tv - offsets[i]); _showGuide('v', tv); break; }
+    }
+    for (const tv of snapY) {
+      if (Math.abs(ny + offsets[i] - tv) < SNAP_DIST) { sy = Math.round(tv - offsets[i]); _showGuide('h', tv); break; }
+    }
+  }
+  return { x: sx, y: sy };
+}
+
+// ── Выравнивание объектов ─────────────────────────
+function alignPdfObj(dir) {
+  const obj = pdfObjects.find(o => o.id === pdfSelId);
+  if (!obj || obj.locked) return;
+  const canvas = document.getElementById('pdf-canvas');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  const d = obj.data;
+  _pushUndo();
+  switch(dir) {
+    case 'left':   d.x = 0; break;
+    case 'cx':     d.x = Math.round(W / 2 - d.w / 2); break;
+    case 'right':  d.x = Math.round(W - d.w); break;
+    case 'top':    d.y = 0; break;
+    case 'cy':     d.y = Math.round(H / 2 - d.h / 2); break;
+    case 'bottom': d.y = Math.round(H - d.h); break;
+  }
+  const el = document.getElementById(obj.id);
+  if (el) { el.style.left = d.x + 'px'; el.style.top = d.y + 'px'; }
+  _syncPropsAll();
+  _saveState();
+}
+
+// ── Undo / Redo ───────────────────────────────────
+function _pushUndo() {
+  _undoStack.push(JSON.stringify(pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: o.data.imgSrc ? '[img]' : '' } }))));
+  if (_undoStack.length > 40) _undoStack.shift();
+  _redoStack = [];
+}
+
+function undoPdf() {
+  if (!_undoStack.length) return;
+  _redoStack.push(JSON.stringify(pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: o.data.imgSrc ? '[img]' : '' } }))));
+  _restoreState(JSON.parse(_undoStack.pop()));
+  setSt('Отменено ↩', 'ok');
+}
+
+function redoPdf() {
+  if (!_redoStack.length) return;
+  _undoStack.push(JSON.stringify(pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: o.data.imgSrc ? '[img]' : '' } }))));
+  _restoreState(JSON.parse(_redoStack.pop()));
+  setSt('Повторено ↪', 'ok');
+}
+
+function _restoreState(saved) {
+  // Удалить inset карты
+  Object.keys(_insetMaps).forEach(id => { try { _insetMaps[id].remove(); } catch(e) {} delete _insetMaps[id]; });
+  pdfObjects = saved.map(o => ({ ...o, data: { ...OBJ_DEFAULTS[o.type] || OBJ_DEFAULTS.rect, ...o.data } }));
+  pdfSelId = null;
+  _renderAll();
+  _renderLayersList();
+  _renderProps();
+  _saveState();
+}
+
+// ── Лупа — вставка увеличенного фрагмента ────────
+function addPdfInset() {
+  const W = pdfOrientation === 'landscape' ? CANVAS_W_L : CANVAS_W_P;
+  const H = pdfOrientation === 'landscape' ? CANVAS_H_L : CANVAS_H_P;
+  _pushUndo();
+  createPdfObj('inset', { x: Math.round(W / 2 - 170), y: Math.round(H / 2 - 115), w: 340, h: 230, name: 'Лупа' });
+  setPdfTool('select');
+}
+
+function _initInsetMap(el, obj) {
+  if (_insetMaps[obj.id]) return; // уже создана
+  const mapDiv = document.createElement('div');
+  mapDiv.className = 'inset-leaflet';
+  mapDiv.id = 'imap_' + obj.id;
+  mapDiv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:0;border-radius:inherit';
+  el.appendChild(mapDiv);
+
+  const center = pdfMap ? pdfMap.getCenter() : map.getCenter();
+  const zoom   = Math.min(19, (pdfMap ? pdfMap.getZoom() : map.getZoom()) + (obj.data.insetZoom || 2));
+
+  const imap = L.map('imap_' + obj.id, {
+    center, zoom,
+    zoomControl: true,
+    dragging: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: false,
+    attributionControl: false,
+  });
+
+  (pdfMapSat
+    ? L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 })
+    : L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 })
+  ).addTo(imap);
+
+  mapLayers.forEach(l => {
+    if (l.layer && l.layer.toGeoJSON) {
+      try {
+        const geo   = l.layer.toGeoJSON();
+        const style = l._psStyle || { color: l.color, fillColor: l.color, fillOpacity: l.type === 'szz' ? 0.1 : 0.15, weight: 3 };
+        L.geoJSON(geo, { style: () => style }).addTo(imap);
+      } catch(e) {}
+    }
+  });
+
+  // Рамка-уголок "лупа"
+  const badge = document.createElement('div');
+  badge.style.cssText = 'position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;z-index:500;pointer-events:none';
+  badge.textContent = '🔍 Фрагмент';
+  mapDiv.appendChild(badge);
+
+  _insetMaps[obj.id] = imap;
+  setTimeout(() => imap.invalidateSize(), 150);
+
+  // Стоп всплытие событий (чтоб не мешал drag объекта)
+  mapDiv.addEventListener('pointerdown', e => e.stopPropagation());
+}
+
 // ── Управление картой внутри PDF ─────────────────
 function togglePdfMapSat() {
   if (!pdfMap) return;
@@ -166,17 +343,33 @@ function _buildEditorUI() {
 function _buildToolbar() {
   const tb = document.getElementById('pdf-toolbar');
   tb.innerHTML = `
-    <button class="ps-tool active" id="pst-select" data-tip="Выбрать (V)" onclick="setPdfTool('select')">↖</button>
+    <button class="ps-tool ${pdfTool==='select'?'active':''}" id="pst-select" data-tip="Выбрать (V)" onclick="setPdfTool('select')">↖</button>
+    <button class="ps-tool" data-tip="Отменить (Ctrl+Z)" onclick="undoPdf()" style="font-size:13px">↩</button>
+    <button class="ps-tool" data-tip="Повторить (Ctrl+Y)" onclick="redoPdf()" style="font-size:13px">↪</button>
     <div class="ps-tool-sep"></div>
-    <button class="ps-tool" id="pst-text"    data-tip="Текст (T)"           onclick="setPdfTool('text')">T</button>
-    <button class="ps-tool" id="pst-rect"    data-tip="Прямоугольник (R)"   onclick="setPdfTool('rect')">▭</button>
-    <button class="ps-tool" id="pst-ellipse" data-tip="Эллипс (E)"          onclick="setPdfTool('ellipse')">◯</button>
-    <button class="ps-tool" id="pst-line"    data-tip="Линия (L)"           onclick="setPdfTool('line')">╱</button>
-    <button class="ps-tool" id="pst-image"   data-tip="Изображение (I)"     onclick="document.getElementById('ps-image-upload').click()">🖼</button>
+    <button class="ps-tool ${pdfTool==='text'   ?'active':''}" id="pst-text"    data-tip="Текст (T)"         onclick="setPdfTool('text')">T</button>
+    <button class="ps-tool ${pdfTool==='rect'   ?'active':''}" id="pst-rect"    data-tip="Прямоугольник (R)" onclick="setPdfTool('rect')">▭</button>
+    <button class="ps-tool ${pdfTool==='ellipse'?'active':''}" id="pst-ellipse" data-tip="Эллипс (E)"        onclick="setPdfTool('ellipse')">◯</button>
+    <button class="ps-tool ${pdfTool==='line'   ?'active':''}" id="pst-line"    data-tip="Линия (L)"         onclick="setPdfTool('line')">╱</button>
+    <button class="ps-tool" id="pst-image" data-tip="Изображение (I)" onclick="document.getElementById('ps-image-upload').click()">🖼</button>
     <div class="ps-tool-sep"></div>
-    <button class="ps-tool" data-tip="Легенда"         onclick="addPdfLegend()">≡</button>
-    <button class="ps-tool" data-tip="Масштаб"         onclick="addPdfScale()">📏</button>
-    <button class="ps-tool" data-tip="Стрелка севера"  onclick="addPdfNorth()">🧭</button>
+    <button class="ps-tool" data-tip="Легенда"        onclick="addPdfLegend()">≡</button>
+    <button class="ps-tool" data-tip="Масштаб"        onclick="addPdfScale()">📏</button>
+    <button class="ps-tool" data-tip="Стрелка севера" onclick="addPdfNorth()">🧭</button>
+    <button class="ps-tool" data-tip="Лупа — вставить увеличенный фрагмент карты" onclick="addPdfInset()" style="font-size:16px">🔍</button>
+    <div class="ps-tool-sep" style="flex-basis:100%;height:0"></div>
+    <div style="width:100%;padding:3px 2px 2px;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px">⬛ Выравнивание</div>
+    <div style="display:flex;gap:2px;width:100%;flex-wrap:wrap">
+      <button class="ps-align-btn" title="По левому краю"  onclick="alignPdfObj('left')">⬛◁</button>
+      <button class="ps-align-btn" title="По центру (гор)" onclick="alignPdfObj('cx')">◁⬛▷</button>
+      <button class="ps-align-btn" title="По правому краю" onclick="alignPdfObj('right')">▷⬛</button>
+      <button class="ps-align-btn" title="По верху"        onclick="alignPdfObj('top')">△⬛</button>
+      <button class="ps-align-btn" title="По центру (вер)" onclick="alignPdfObj('cy')">△⬛▽</button>
+      <button class="ps-align-btn" title="По низу"         onclick="alignPdfObj('bottom')">▽⬛</button>
+    </div>
+    <label style="font-size:10px;color:#4b5563;display:flex;align-items:center;gap:5px;cursor:pointer;margin-top:3px;width:100%">
+      <input type="checkbox" id="snap-toggle" ${_snapEnabled?'checked':''} onchange="_snapEnabled=this.checked"> 🧲 Магнит
+    </label>
     <div class="ps-tool-sep" style="flex-basis:100%;height:0"></div>
     <div class="pdf-orient-row" style="width:100%;margin-top:3px">
       <button class="orient-btn ${pdfOrientation==='landscape'?'active':''}" onclick="setPdfOrientation('landscape')">⇄ Альбомная</button>
@@ -257,10 +450,11 @@ const OBJ_DEFAULTS = {
   scale:   { w:170, h:52,  bg:'rgba(255,255,255,0.88)', color:'#0f172a', fontSize:12, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:true,  strokeColor:'transparent', strokeW:0, content:'__scale__',  textShadow:false },
   north:   { w:60,  h:60,  bg:'rgba(255,255,255,0.82)', color:'#0f172a', fontSize:10, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:50,  shadow:true,  strokeColor:'transparent', strokeW:0, content:'__north__',  textShadow:false },
   image:   { w:160, h:100, bg:'transparent',             color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'transparent', strokeW:0, content:'',           textShadow:false, imgSrc:'' },
+  inset:   { w:340, h:230, bg:'#ffffff',                color:'#0f172a',     fontSize:11, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4, shadow:true,  strokeColor:'#334155',     strokeW:2, content:'__inset__',  textShadow:false, insetZoom:0 },
 };
 
 function _typeName(type) {
-  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение' }[type] || type;
+  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа' }[type] || type;
 }
 
 function createPdfObj(type, overrides = {}) {
@@ -334,6 +528,7 @@ function _renderObjContent(el, obj) {
   if (d.content === '__legend__') { el.innerHTML = _legendHtml(d); return; }
   if (d.content === '__scale__')  { el.innerHTML = _scaleHtml(d);  return; }
   if (d.content === '__north__')  { el.innerHTML = _northHtml(d);  return; }
+  if (d.content === '__inset__')  { _initInsetMap(el, obj); if (_insetMaps[obj.id]) setTimeout(() => _insetMaps[obj.id].invalidateSize(), 80); return; }
   if (d.type === 'image' && d.imgSrc) {
     el.innerHTML = `<img src="${d.imgSrc}" style="width:100%;height:100%;object-fit:contain;border-radius:${d.radius}px;pointer-events:none">`;
     return;
@@ -407,6 +602,7 @@ function _attachObjEvents(el, obj) {
     if (obj.locked) return;
 
     // Drag
+    _pushUndo();
     const startX = e.clientX, startY = e.clientY;
     const ox = obj.data.x,    oy = obj.data.y;
     el.setPointerCapture(e.pointerId);
@@ -417,13 +613,19 @@ function _attachObjEvents(el, obj) {
       const rect   = canvas.getBoundingClientRect();
       const scaleX = canvas.offsetWidth  / rect.width;
       const scaleY = canvas.offsetHeight / rect.height;
-      obj.data.x = Math.round(ox + (ev.clientX - startX) * scaleX);
-      obj.data.y = Math.round(oy + (ev.clientY - startY) * scaleY);
+      const nx = Math.round(ox + (ev.clientX - startX) * scaleX);
+      const ny = Math.round(oy + (ev.clientY - startY) * scaleY);
+      const snapped = _snapObject(obj, nx, ny);
+      obj.data.x = snapped.x;
+      obj.data.y = snapped.y;
       el.style.left = obj.data.x + 'px';
       el.style.top  = obj.data.y + 'px';
       _syncPropsXY();
+      // Инвалидируем inset если есть
+      if (_insetMaps[obj.id]) _insetMaps[obj.id].invalidateSize();
     }
     function onUp() {
+      _clearSnapGuides();
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       _saveState();
@@ -583,6 +785,12 @@ function selectPdfObj(id) {
 // ── Действия с объектами ──────────────────────────
 function deletePdfObj() {
   if (!pdfSelId) return;
+  _pushUndo();
+  // Убиваем inset-карту если есть
+  if (_insetMaps[pdfSelId]) {
+    try { _insetMaps[pdfSelId].remove(); } catch(e) {}
+    delete _insetMaps[pdfSelId];
+  }
   const el = document.getElementById(pdfSelId);
   if (el) el.remove();
   pdfObjects = pdfObjects.filter(o => o.id !== pdfSelId);
@@ -785,7 +993,7 @@ function _renderLayersList() {
       ${pdfObjects.length === 0
         ? '<div class="pl-empty">Нет объектов.<br>Используй инструменты выше.</div>'
         : pdfObjects.map(obj => {
-          const icon = { text:'T', rect:'▭', ellipse:'◯', line:'╱', legend:'≡', scale:'📏', north:'🧭', image:'🖼' }[obj.type] || '?';
+          const icon = { text:'T', rect:'▭', ellipse:'◯', line:'╱', legend:'≡', scale:'📏', north:'🧭', image:'🖼', inset:'🔍' }[obj.type] || '?';
           return `<div class="pl-item ${obj.id===pdfSelId?'selected':''} ${obj.locked?'locked':''}"
                        onclick="selectPdfObj('${obj.id}')">
             <span class="pl-vis" onclick="togglePdfObjVis(event,'${obj.id}')">${obj.visible?'👁':'🙈'}</span>
@@ -812,8 +1020,14 @@ function togglePdfObjVis(e, id) {
 
 // ── Рендер всех объектов ──────────────────────────
 function _renderAll() {
-  // Удаляем все старые элементы объектов
-  document.querySelectorAll('.ps-obj').forEach(el => el.remove());
+  // Удаляем все объекты; для инсетов сначала убиваем Leaflet-карту
+  document.querySelectorAll('.ps-obj').forEach(el => {
+    if (_insetMaps[el.id]) {
+      try { _insetMaps[el.id].remove(); } catch(e) {}
+      delete _insetMaps[el.id];
+    }
+    el.remove();
+  });
   pdfObjects.forEach(obj => _renderObj(obj));
 }
 
@@ -911,6 +1125,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'l' || e.key === 'L') setPdfTool('line');
   if (e.key === 'Escape') selectPdfObj(null);
   if ((e.ctrlKey||e.metaKey) && e.key==='d') { e.preventDefault(); duplicatePdfObj(); }
+  if ((e.ctrlKey||e.metaKey) && e.key==='z') { e.preventDefault(); undoPdf(); }
+  if ((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.shiftKey && e.key==='z'))) { e.preventDefault(); redoPdf(); }
 
   // Стрелки — двигать объект
   if (pdfSelId && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {

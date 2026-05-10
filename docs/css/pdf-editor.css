@@ -85,6 +85,32 @@
 .ps-tool.active { background: #1a2d50; border-color: #60a5fa; color: #60a5fa; }
 .ps-tool-sep { width: 1px; background: #1f2937; margin: 2px 2px; }
 
+/* Кнопки выравнивания */
+.ps-align-btn {
+  flex: 1;
+  min-width: 36px;
+  height: 28px;
+  border-radius: 5px;
+  border: 1px solid #1f2937;
+  background: #161b27;
+  color: #6b7280;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .12s;
+}
+.ps-align-btn:hover { border-color: #60a5fa; color: #e2e8f0; background: #1a2d50; }
+
+/* Направляющие snap */
+.snap-guide { position: absolute; pointer-events: none; z-index: 9999; }
+
+/* Инсет-карта (лупа) */
+.inset-leaflet { border-radius: inherit; overflow: hidden; }
+.inset-leaflet .leaflet-control-zoom { margin: 6px !important; }
+.inset-leaflet .leaflet-control-zoom a {
+  width: 22px !important; height: 22px !important;
+  line-height: 22px !important; font-size: 14px !important;
+}
+
 /* Кнопки управления картой в PDF */
 .pdf-map-ctrl {
   width: 100%;
