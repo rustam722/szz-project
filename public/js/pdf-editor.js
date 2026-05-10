@@ -675,17 +675,17 @@ function _arrowHtml(obj) {
 // ── Экспорт PNG ───────────────────────────────────
 async function exportPng() {
   const btn = document.getElementById('pdf-save-btn');
-  btn.textContent = '⏳ PNG…'; btn.disabled = true;
+  if (btn) { btn.textContent = '⏳ PNG…'; btn.disabled = true; }
   selectPdfObj(null);
-  const lc = document.querySelector('#pdf-map .leaflet-control-container');
-  if (lc) lc.style.display = 'none';
+  // Скрываем все элементы управления перед экспортом
+  const hiddenEls = _hideExportOverlays();
   const canvas = document.getElementById('pdf-canvas');
   try {
     const snap = await html2canvas(canvas, {
       useCORS: true, allowTaint: false,
       scale: window.devicePixelRatio * 2,
       backgroundColor: '#ffffff',
-      ignoreElements: el => el.classList && el.classList.contains('ps-handle'),
+      ignoreElements: el => el.classList && (el.classList.contains('ps-handle') || el.classList.contains('no-export')),
     });
     const a = document.createElement('a');
     const al = getActiveLayer();
@@ -694,8 +694,26 @@ async function exportPng() {
     a.click();
     setSt('PNG сохранён ✓', 'ok');
   } catch(err) { setSt('Ошибка PNG: ' + err.message, 'err'); }
-  if (lc) lc.style.display = '';
-  btn.textContent = '💾 Сохранить PDF'; btn.disabled = false;
+  _showExportOverlays(hiddenEls);
+  if (btn) { btn.textContent = '🖼 PNG'; btn.disabled = false; }
+}
+
+// Скрыть элементы управления картами перед экспортом
+function _hideExportOverlays() {
+  const hidden = [];
+  // Контролы главной PDF-карты
+  document.querySelectorAll('#pdf-map .leaflet-control-container').forEach(el => {
+    hidden.push({ el, display: el.style.display }); el.style.display = 'none';
+  });
+  // Контролы всех лупа-карт + бейджи
+  document.querySelectorAll('.inset-leaflet .leaflet-control-container, .no-export').forEach(el => {
+    hidden.push({ el, display: el.style.display }); el.style.display = 'none';
+  });
+  return hidden;
+}
+
+function _showExportOverlays(hidden) {
+  hidden.forEach(({ el, display }) => { el.style.display = display; });
 }
 
 // ── Snap / Притяжение ─────────────────────────────
@@ -715,45 +733,86 @@ function _showGuide(dir, pos) {
 }
 
 function _snapObject(obj, nx, ny) {
-  if (!_snapEnabled) return { x: nx, y: ny };
-  _clearSnapGuides();
   const canvas = document.getElementById('pdf-canvas');
   const W = canvas.offsetWidth, H = canvas.offsetHeight;
   const d = obj.data;
 
-  // Опорные точки объекта
-  const pts = [
-    { ox: nx,              oy: ny },
-    { ox: nx + d.w / 2,   oy: ny + d.h / 2 },
-    { ox: nx + d.w,        oy: ny + d.h },
-  ];
+  // Сначала — grid snap
+  if (_gridSnap) {
+    nx = Math.round(nx / _gridSize) * _gridSize;
+    ny = Math.round(ny / _gridSize) * _gridSize;
+  }
 
-  // Цели: центр и края холста
-  const snapX = [0, Math.round(W / 2), W];
-  const snapY = [0, Math.round(H / 2), H];
+  if (!_snapEnabled) {
+    // Даже без snap — не даём выйти за страницу
+    return {
+      x: Math.max(0, Math.min(W - d.w, nx)),
+      y: Math.max(0, Math.min(H - d.h, ny)),
+    };
+  }
+
+  _clearSnapGuides();
+
+  // ── Цели для snap по X ──────────────────────────
+  // Формат: { val, offset } — когда левый_край + offset == val → snap
+  // offset=0: левый край объекта, offset=w/2: центр, offset=w: правый край
+  const targetsX = [
+    // Края и центр страницы
+    { val: 0,              offset: 0      },   // левый → к левому краю
+    { val: W,              offset: d.w    },   // правый → к правому краю
+    { val: Math.round(W/2),offset: d.w/2  },   // центр
+    { val: 0,              offset: d.w    },   // правый → к левому краю (у стены)
+    { val: W,              offset: 0      },   // левый → к правому краю
+  ];
+  const targetsY = [
+    { val: 0,              offset: 0      },
+    { val: H,              offset: d.h    },
+    { val: Math.round(H/2),offset: d.h/2  },
+    { val: 0,              offset: d.h    },
+    { val: H,              offset: 0      },
+  ];
 
   // Цели от других объектов
   pdfObjects.filter(o => o.id !== obj.id && o.visible).forEach(o => {
-    snapX.push(o.data.x, Math.round(o.data.x + o.data.w / 2), o.data.x + o.data.w);
-    snapY.push(o.data.y, Math.round(o.data.y + o.data.h / 2), o.data.y + o.data.h);
+    const od = o.data;
+    // Выравнивание краёв — левый к левому, правый к правому, и т.д.
+    targetsX.push(
+      { val: od.x,                   offset: 0     },  // левый → левый
+      { val: od.x,                   offset: d.w   },  // правый → левый
+      { val: od.x + od.w,            offset: 0     },  // левый → правый
+      { val: od.x + od.w,            offset: d.w   },  // правый → правый
+      { val: od.x + od.w/2,          offset: d.w/2 },  // центр → центр
+    );
+    targetsY.push(
+      { val: od.y,                   offset: 0     },
+      { val: od.y,                   offset: d.h   },
+      { val: od.y + od.h,            offset: 0     },
+      { val: od.y + od.h,            offset: d.h   },
+      { val: od.y + od.h/2,          offset: d.h/2 },
+    );
   });
 
   let sx = nx, sy = ny;
-  const offsets = [0, d.w / 2, d.w];
+  let snappedX = false, snappedY = false;
 
-  for (let i = 0; i < 3; i++) {
-    for (const tv of snapX) {
-      if (Math.abs(nx + offsets[i] - tv) < SNAP_DIST) { sx = Math.round(tv - offsets[i]); _showGuide('v', tv); break; }
-    }
-    for (const tv of snapY) {
-      if (Math.abs(ny + offsets[i] - tv) < SNAP_DIST) { sy = Math.round(tv - offsets[i]); _showGuide('h', tv); break; }
+  for (const { val, offset } of targetsX) {
+    if (!snappedX && Math.abs(nx + offset - val) < SNAP_DIST) {
+      sx = Math.round(val - offset);
+      _showGuide('v', val);
+      snappedX = true;
     }
   }
-  // Snap to grid
-  if (_gridSnap) {
-    sx = Math.round(sx / _gridSize) * _gridSize;
-    sy = Math.round(sy / _gridSize) * _gridSize;
+  for (const { val, offset } of targetsY) {
+    if (!snappedY && Math.abs(ny + offset - val) < SNAP_DIST) {
+      sy = Math.round(val - offset);
+      _showGuide('h', val);
+      snappedY = true;
+    }
   }
+
+  // Жёсткий clamp — объект не выходит за страницу
+  sx = Math.max(0, Math.min(W - d.w, sx));
+  sy = Math.max(0, Math.min(H - d.h, sy));
 
   return { x: sx, y: sy };
 }
@@ -834,7 +893,7 @@ function _initInsetMap(el, obj) {
 
   const imap = L.map('imap_' + obj.id, {
     center, zoom,
-    zoomControl: true,
+    zoomControl: false,        // плюсы/минусы убраны (мешают при экспорте)
     dragging: true,
     scrollWheelZoom: true,
     doubleClickZoom: false,
@@ -856,10 +915,11 @@ function _initInsetMap(el, obj) {
     }
   });
 
-  // Рамка-уголок "лупа"
+  // Бейдж "Фрагмент" — только в редакторе, скрыт при экспорте
   const badge = document.createElement('div');
+  badge.className = 'inset-badge no-export';
   badge.style.cssText = 'position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;z-index:500;pointer-events:none';
-  badge.textContent = '🔍 Фрагмент';
+  badge.textContent = '🔍 Лупа';
   mapDiv.appendChild(badge);
 
   _insetMaps[obj.id] = imap;
@@ -1001,11 +1061,16 @@ function _buildToolbar() {
 }
 
 function _buildActions() {
-  document.getElementById('pdf-actions').innerHTML = `
-    <button class="pdf-save-btn" id="pdf-save-btn" onclick="renderPdf()">💾 Сохранить PDF</button>
-    <button class="pdf-save-btn" style="background:#1e3a20;border-color:#22c55e;color:#4ade80;margin-top:4px" onclick="exportPng()">🖼 Сохранить PNG</button>
-    <button class="pdf-exit-btn" onclick="exitPdfMode()">✕ Выйти из редактора</button>
-  `;
+  // Кнопки PDF/PNG/Карта теперь в #pdf-sidebar-header (всегда видны)
+  // Здесь только скрытый anchor для pdf-save-btn id (используется в renderPdf/exportPng)
+  const existing = document.getElementById('pdf-save-btn');
+  if (!existing) {
+    const phantom = document.createElement('span');
+    phantom.id = 'pdf-save-btn';
+    phantom.style.display = 'none';
+    document.getElementById('pdf-actions').appendChild(phantom);
+  }
+  document.getElementById('pdf-actions').style.display = 'none'; // прячем пустую зону
 }
 
 // ── Ориентация ────────────────────────────────────
@@ -1872,15 +1937,10 @@ document.addEventListener('keydown', e => {
 // ── Экспорт PDF ───────────────────────────────────
 async function renderPdf() {
   const btn = document.getElementById('pdf-save-btn');
-  btn.textContent = '⏳ Генерация…'; btn.disabled = true;
+  if (btn) { btn.textContent = '⏳…'; btn.disabled = true; }
 
-  // Убираем выделение
   selectPdfObj(null);
-
-  // Скрываем UI-элементы Leaflet
-  const lc = document.querySelector('#pdf-map .leaflet-control-container');
-  if (lc) lc.style.display = 'none';
-
+  const hiddenEls = _hideExportOverlays();
   const canvas = document.getElementById('pdf-canvas');
   const isLand = pdfOrientation === 'landscape';
 
@@ -1893,7 +1953,7 @@ async function renderPdf() {
       backgroundColor: '#ffffff',
       width:  canvas.offsetWidth,
       height: canvas.offsetHeight,
-      ignoreElements: el => el.classList && el.classList.contains('ps-handle'),
+      ignoreElements: el => el.classList && (el.classList.contains('ps-handle') || el.classList.contains('no-export')),
     });
 
     const imgData = snap.toDataURL('image/jpeg', 0.94);
@@ -1912,9 +1972,8 @@ async function renderPdf() {
     console.error(e);
   }
 
-  if (lc) lc.style.display = '';
-  btn.textContent = '💾 Сохранить PDF';
-  btn.disabled = false;
+  _showExportOverlays(hiddenEls);
+  if (btn) { btn.textContent = '💾 PDF'; btn.disabled = false; }
 }
 
 // ── stub для совместимости ────────────────────────
