@@ -172,6 +172,17 @@ function _refreshPdfMapLayers() {
   setTimeout(() => { if (pdfMap) pdfMap.invalidateSize(); }, 150);
 }
 
+// Быстрое обновление fillOpacity без пересоздания слоёв (для toggleFills)
+function _refreshPdfMapLayersWithOpacity() {
+  if (!pdfMap || !_pdfGeoLayers.length) return;
+  _pdfGeoLayers.forEach((gl, i) => {
+    const l = mapLayers[mapLayers.length - 1 - i] ?? mapLayers[i]; // учитываем порядок unshift
+    if (!l) return;
+    const fo = l._tempFillOpacity ?? (l._psStyle?.fillOpacity ?? (l.type === 'szz' ? 0.1 : 0.15));
+    try { gl.setStyle({ fillOpacity: fo }); } catch(e) {}
+  });
+}
+
 // ═══════════════════════════════════════════════════
 // ── ИНСТРУМЕНТЫ РИСОВАНИЯ ПУТИ ──────────────────
 // ═══════════════════════════════════════════════════
@@ -267,6 +278,37 @@ function _renderCalloutHtml(obj) {
       <rect x="0" y="0" width="${w}" height="${h}" fill="${d.bg}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" rx="${r}"/>
     </svg>
     <div class="callout-text-inner" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:6px 12px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};word-break:break-word;z-index:1;pointer-events:none;user-select:none">${d.content||'Выноска'}</div>
+  </div>`;
+}
+
+// ── Выноска с полочкой (leader line) ─────────────
+function _renderLeaderHtml(obj) {
+  const d = obj.data;
+  const w = d.w, h = d.h;
+  const sw = d.strokeW || 2;
+  const color = d.strokeColor || '#0f172a';
+  // Полочка — горизонтальная линия у нижней части текстового блока
+  const shelfY = h - 4;
+  // Точка стрелки (хвост) в локальных координатах
+  const lx = (d.tailX ?? d.x + w/2) - d.x;
+  const ly = (d.tailY ?? d.y + h + 40) - d.y;
+  // Линия от середины полочки до острия
+  const sx = w / 2;
+  // Наконечник стрелки
+  const ang = Math.atan2(ly - shelfY, lx - sx);
+  const ahl = 10;
+  const ax1x = (lx - ahl * Math.cos(ang - 0.45)).toFixed(1);
+  const ax1y = (ly - ahl * Math.sin(ang - 0.45)).toFixed(1);
+  const ax2x = (lx - ahl * Math.cos(ang + 0.45)).toFixed(1);
+  const ax2y = (ly - ahl * Math.sin(ang + 0.45)).toFixed(1);
+  return `<div style="position:absolute;inset:0;pointer-events:none;overflow:visible">
+    <svg style="position:absolute;inset:0;overflow:visible;width:${w}px;height:${h}px;pointer-events:none">
+      <line x1="0" y1="${shelfY}" x2="${w}" y2="${shelfY}" stroke="${color}" stroke-width="${sw}"/>
+      <line x1="${sx}" y1="${shelfY}" x2="${lx.toFixed(1)}" y2="${ly.toFixed(1)}" stroke="${color}" stroke-width="${sw}"/>
+      <line x1="${lx.toFixed(1)}" y1="${ly.toFixed(1)}" x2="${ax1x}" y2="${ax1y}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>
+      <line x1="${lx.toFixed(1)}" y1="${ly.toFixed(1)}" x2="${ax2x}" y2="${ax2y}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>
+    </svg>
+    <div class="leader-text-inner" style="position:absolute;left:0;right:0;top:0;bottom:${h-shelfY+4}px;display:flex;align-items:flex-end;padding:2px 4px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};pointer-events:none;user-select:none;white-space:pre-wrap;word-break:break-word">${d.content||'Подпись'}</div>
   </div>`;
 }
 
@@ -607,7 +649,16 @@ function _initSidebarResize() {
 // ── Grid ──────────────────────────────────────────
 function toggleGrid() {
   _gridEnabled = !_gridEnabled;
-  document.getElementById('pdf-canvas').classList.toggle('show-grid', _gridEnabled);
+  // Сетка рендерится через оверлей (поверх карты), не через background canvas
+  let ov = document.getElementById('pdf-grid-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'pdf-grid-overlay';
+    ov.className = 'no-export'; // скрыть при экспорте
+    ov.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:2';
+    document.getElementById('pdf-canvas').appendChild(ov);
+  }
+  ov.style.display = _gridEnabled ? 'block' : 'none';
   const btn = document.getElementById('grid-btn');
   if (btn) btn.classList.toggle('active', _gridEnabled);
 }
@@ -1001,6 +1052,7 @@ function _buildToolbar() {
     <button class="ps-tool ${pdfTool==='freehand'      ?'active':''}" id="pst-freehand"      data-tip="Карандаш — рисуй от руки (F)"  onclick="setPdfTool('freehand')" style="font-size:16px">✏</button>
     <button class="ps-tool ${pdfTool==='polygon-shape' ?'active':''}" id="pst-polygon-shape" data-tip="Многоугольник — клик по вершинам | клик на первую = замкнуть" onclick="setPdfTool('polygon-shape')" style="font-size:14px">⬠</button>
     <button class="ps-tool ${pdfTool==='callout'       ?'active':''}" id="pst-callout"       data-tip="Выноска — 1й клик = острие, 2й клик = текстбокс"      onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
+    <button class="ps-tool" data-tip="Выноска с полочкой — подпись объекта" onclick="createPdfObj('leader',{name:'Выноска-полочка'})" style="font-size:14px">⌐</button>
     <div class="ps-tool-sep"></div>
     <button class="ps-tool" data-tip="Легенда"           onclick="addPdfLegend()">≡</button>
     <button class="ps-tool" data-tip="Масштаб"           onclick="addPdfScale()">📏</button>
@@ -1116,10 +1168,11 @@ const OBJ_DEFAULTS = {
   path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, rotation:0 },
   bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, rotation:0 },
   callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a',     fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:true,  strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, rotation:0 },
+  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent',            color:'#0f172a',     fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:0, shadow:false, strokeColor:'#0f172a', strokeW:2, content:'Подпись объекта', textShadow:false, rotation:0 },
 };
 
 function _typeName(type) {
-  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка', path:'Путь', bezier:'Кривая', callout:'Выноска' }[type] || type;
+  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка', path:'Путь', bezier:'Кривая', callout:'Выноска', leader:'Выноска-полочка' }[type] || type;
 }
 
 function createPdfObj(type, overrides = {}) {
@@ -1202,6 +1255,7 @@ function _renderObjContent(el, obj) {
   if (d.content === '__path__')   { el.innerHTML = _renderPathSvg(obj);   return; }
   if (d.content === '__bezier__') { el.innerHTML = _renderBezierSvg(obj); return; }
   if (obj.type  === 'callout')    { el.innerHTML = _renderCalloutHtml(obj); return; }
+  if (obj.type  === 'leader')     { el.innerHTML = _renderLeaderHtml(obj);  return; }
   if (d.type === 'image' && d.imgSrc) {
     el.innerHTML = `<img src="${d.imgSrc}" style="width:100%;height:100%;object-fit:contain;border-radius:${d.radius}px;pointer-events:none">`;
     return;
@@ -1256,8 +1310,8 @@ function _updateHandles(el, obj) {
   if (['path','bezier'].includes(obj.type)) {
     _renderPathHandles(el, obj); return;
   }
-  // Выноска — хендл хвоста + стандартные
-  if (obj.type === 'callout') {
+  // Выноска / Полочка — хендл хвоста + стандартные
+  if (obj.type === 'callout' || obj.type === 'leader') {
     _renderCalloutHandles(el, obj);
   }
 
@@ -1340,9 +1394,10 @@ function _attachObjEvents(el, obj) {
     if (obj.locked) return;
     e.stopPropagation();
 
-    // Выноска — редактировать текст внутри callout-text-inner
-    if (obj.type === 'callout') {
-      const div = el.querySelector('.callout-text-inner');
+    // Выноска / Выноска-полочка — редактировать текст
+    if (obj.type === 'callout' || obj.type === 'leader') {
+      const sel = obj.type === 'callout' ? '.callout-text-inner' : '.leader-text-inner';
+      const div = el.querySelector(sel);
       if (!div) return;
       div.style.pointerEvents = 'auto';
       div.style.userSelect = 'text';
@@ -1588,7 +1643,8 @@ function _renderProps() {
 
   const bgHex = _rgbaToHex(d.bg);
   const alpha  = _rgbaAlpha(d.bg);
-  const showText = ['text','legend','scale','north','callout','rect','ellipse'].includes(obj.type);
+  // Текстовые настройки только для объектов с редактируемым или значимым текстом
+  const showText = ['text','callout','leader','rect','ellipse'].includes(obj.type);
 
   panel.innerHTML = `
     <div class="pp-title">⚙ Свойства: <span style="color:#60a5fa;text-transform:none">${obj.name}</span></div>

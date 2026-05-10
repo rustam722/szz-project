@@ -225,13 +225,14 @@
   background: rgba(249,115,22,.6);
 }
 
-/* Сетка на холсте */
-#pdf-canvas.show-grid {
+/* Сетка — оверлей поверх карты (z-index:2) */
+#pdf-grid-overlay {
   background-image:
-    linear-gradient(rgba(99,102,241,.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(99,102,241,.12) 1px, transparent 1px);
+    linear-gradient(rgba(99,102,241,.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,.18) 1px, transparent 1px);
   background-size: 20px 20px;
   background-position: 0 0;
+  display: none;
 }
 
 /* Контекстное меню */

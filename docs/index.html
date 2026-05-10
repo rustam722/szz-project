@@ -261,11 +261,15 @@
   window.newProject = () => {
     currentProjectId = null;
     clearAll();
-    // Сбрасываем PDF-объекты и состояние карты PDF
-    if (typeof pdfObjects !== 'undefined') {
-      pdfObjects = [];
-      Store.del('pdfObjects');
-      Store.del('pdfOrientation');
+    // Сбрасываем PDF-объекты и состояние
+    if (typeof pdfObjects !== 'undefined') pdfObjects = [];
+    Store.del('pdfObjects');
+    Store.del('pdfOrientation');
+    pdfOrientation = 'landscape';
+    // Очищаем холст если редактор открыт
+    if (document.getElementById('pdf-editor').style.display !== 'none') {
+      if (typeof _renderAll === 'function') { _renderAll(); _renderLayersList(); _renderProps(); }
+      if (typeof _refreshPdfMapLayers === 'function') _refreshPdfMapLayers();
     }
     document.getElementById('tb-project-name').textContent = 'Новый проект';
     closeProjects();

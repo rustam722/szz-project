@@ -554,8 +554,8 @@ function addParcelLayer(p) {
 }
 
 function toggleFills() {
-  const hideSzz = document.getElementById('pdf-no-fill-szz') ? document.getElementById('pdf-no-fill-szz').checked : false;
-  const hideZu  = document.getElementById('pdf-no-fill-zu')  ? document.getElementById('pdf-no-fill-zu').checked  : false;
+  const hideSzz = document.getElementById('pdf-no-fill-szz')?.checked ?? false;
+  const hideZu  = document.getElementById('pdf-no-fill-zu')?.checked  ?? false;
   mapLayers.forEach(l => {
     if (l.layer && l.layer.setStyle) {
       const s = l._psStyle || {};
@@ -564,4 +564,16 @@ function toggleFills() {
       l.layer.setStyle({ fillOpacity: fo });
     }
   });
+  // Обновить и слои на PDF-карте
+  if (typeof _refreshPdfMapLayers === 'function') {
+    // Временно применяем fillOpacity к _psStyle для передачи в refresh
+    mapLayers.forEach(l => {
+      const s = l._psStyle || {};
+      const def = l.type === 'szz' ? 0.1 : 0.15;
+      const fo  = l.type === 'szz' ? (hideSzz ? 0 : (s.fillOpacity ?? def)) : (hideZu ? 0 : (s.fillOpacity ?? def));
+      l._tempFillOpacity = fo;
+    });
+    _refreshPdfMapLayersWithOpacity();
+    mapLayers.forEach(l => { delete l._tempFillOpacity; });
+  }
 }
