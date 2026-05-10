@@ -275,7 +275,6 @@ html, body {
   gap: 8px;
   backdrop-filter: blur(8px);
   white-space: nowrap;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
 }
 .parcel-nav select {
   background: var(--bg3);
@@ -615,7 +614,6 @@ textarea {
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
   overflow: hidden;
 }
 .modal-hdr {

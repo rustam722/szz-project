@@ -729,9 +729,15 @@ async function exportPng() {
   const btn = document.getElementById('pdf-save-btn');
   if (btn) { btn.textContent = '⏳ PNG…'; btn.disabled = true; }
   selectPdfObj(null);
-  // Скрываем все элементы управления перед экспортом
   const hiddenEls = _hideExportOverlays();
   const canvas = document.getElementById('pdf-canvas');
+  // Сбрасываем CSS transform чтобы карта не смещалась при захвате
+  const savedTransform = canvas.style.transform;
+  canvas.style.transform = 'none';
+  canvas.style.transformOrigin = 'top left';
+  if (pdfMap) pdfMap.invalidateSize(false);
+  Object.values(_insetMaps).forEach(m => { try { m.invalidateSize(false); } catch(e){} });
+  await new Promise(r => setTimeout(r, 250));
   try {
     const snap = await html2canvas(canvas, {
       useCORS: true, allowTaint: false,
@@ -746,6 +752,11 @@ async function exportPng() {
     a.click();
     setSt('PNG сохранён ✓', 'ok');
   } catch(err) { setSt('Ошибка PNG: ' + err.message, 'err'); }
+  // Восстанавливаем transform
+  canvas.style.transform = savedTransform;
+  canvas.style.transformOrigin = 'center center';
+  if (pdfMap) pdfMap.invalidateSize(false);
+  Object.values(_insetMaps).forEach(m => { try { m.invalidateSize(false); } catch(e){} });
   _showExportOverlays(hiddenEls);
   if (btn) { btn.textContent = '🖼 PNG'; btn.disabled = false; }
 }
@@ -753,11 +764,9 @@ async function exportPng() {
 // Скрыть элементы управления картами перед экспортом
 function _hideExportOverlays() {
   const hidden = [];
-  // Контролы главной PDF-карты
   document.querySelectorAll('#pdf-map .leaflet-control-container').forEach(el => {
     hidden.push({ el, display: el.style.display }); el.style.display = 'none';
   });
-  // Контролы всех лупа-карт + бейджи
   document.querySelectorAll('.inset-leaflet .leaflet-control-container, .no-export').forEach(el => {
     hidden.push({ el, display: el.style.display }); el.style.display = 'none';
   });
@@ -1031,65 +1040,65 @@ function fitPdfMapToLayer() {
 
 // ── UI редактора ──────────────────────────────────
 function _buildEditorUI() {
-  _buildToolbar();
+  _buildLeftToolbar();
+  _buildToolbar();    // правый сайдбар — доп. контролы
   _buildActions();
 }
 
+// ── Левый тулбар (инструменты, как в Photoshop) ──
+function _buildLeftToolbar() {
+  const tb = document.getElementById('pdf-left-toolbar');
+  if (!tb) return;
+  const T = (t) => pdfTool === t ? 'class="ps-ltool active"' : 'class="ps-ltool"';
+  tb.innerHTML = `
+    <button class="ps-ltool" data-tip="Отменить (Ctrl+Z)" onclick="undoPdf()" style="font-size:14px">↩</button>
+    <button class="ps-ltool" data-tip="Повторить (Ctrl+Y)" onclick="redoPdf()" style="font-size:14px">↪</button>
+    <div class="ps-ltool-sep"></div>
+    <button ${T('select')} id="pst-select" data-tip="Выбрать (V)" onclick="setPdfTool('select')" style="font-size:17px">↖</button>
+    <div class="ps-ltool-sep"></div>
+    <button ${T('text')} id="pst-text" data-tip="Текст (T)" onclick="setPdfTool('text')" style="font-weight:700">T</button>
+    <button ${T('rect')} id="pst-rect" data-tip="Прямоугольник (R)" onclick="setPdfTool('rect')">▭</button>
+    <button ${T('ellipse')} id="pst-ellipse" data-tip="Эллипс (E)" onclick="setPdfTool('ellipse')">◯</button>
+    <button ${T('line')} id="pst-line" data-tip="Линия (L)" onclick="setPdfTool('line')">╱</button>
+    <button class="ps-ltool" id="pst-image" data-tip="Изображение" onclick="document.getElementById('ps-image-upload').click()">🖼</button>
+    <div class="ps-ltool-sep"></div>
+    <button ${T('path')} id="pst-path" data-tip="Перо — прямые (P) | 2×клик = завершить" onclick="setPdfTool('path')" style="font-size:17px">✒</button>
+    <button ${T('bezier')} id="pst-bezier" data-tip="Безье (B) | 2×клик = завершить" onclick="setPdfTool('bezier')" style="font-size:16px">〰</button>
+    <button ${T('freehand')} id="pst-freehand" data-tip="Карандаш (F)" onclick="setPdfTool('freehand')" style="font-size:16px">✏</button>
+    <button ${T('polygon-shape')} id="pst-polygon-shape" data-tip="Многоугольник" onclick="setPdfTool('polygon-shape')" style="font-size:15px">⬠</button>
+    <div class="ps-ltool-sep"></div>
+    <button ${T('callout')} id="pst-callout" data-tip="Выноска — 1й клик=острие, 2й=бокс" onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
+    <button class="ps-ltool" data-tip="Выноска с полочкой" onclick="createPdfObj('leader',{name:'Выноска-полочка'})" style="font-size:15px">⌐</button>
+    <div class="ps-ltool-sep"></div>
+    <button class="ps-ltool" data-tip="Легенда" onclick="addPdfLegend()">≡</button>
+    <button class="ps-ltool" data-tip="Масштаб" onclick="addPdfScale()" style="font-size:13px">📏</button>
+    <button class="ps-ltool" data-tip="Стрелка севера" onclick="addPdfNorth()" style="font-size:13px">🧭</button>
+    <button class="ps-ltool" data-tip="Стрелка-указатель" onclick="createPdfObj('arrow',{name:'Стрелка'})">➡</button>
+    <button class="ps-ltool" data-tip="Лупа — фрагмент карты" onclick="addPdfInset()" style="font-size:16px">🔍</button>
+  `;
+}
+
+// ── Правый сайдбар — доп. контролы ───────────────
 function _buildToolbar() {
   const tb = document.getElementById('pdf-toolbar');
   tb.innerHTML = `
-    <button class="ps-tool ${pdfTool==='select'?'active':''}" id="pst-select" data-tip="Выбрать (V)" onclick="setPdfTool('select')">↖</button>
-    <button class="ps-tool" data-tip="Отменить (Ctrl+Z)" onclick="undoPdf()" style="font-size:13px">↩</button>
-    <button class="ps-tool" data-tip="Повторить (Ctrl+Y)" onclick="redoPdf()" style="font-size:13px">↪</button>
-    <div class="ps-tool-sep"></div>
-    <button class="ps-tool ${pdfTool==='text'          ?'active':''}" id="pst-text"          data-tip="Текст (T)"                   onclick="setPdfTool('text')">T</button>
-    <button class="ps-tool ${pdfTool==='rect'          ?'active':''}" id="pst-rect"          data-tip="Прямоугольник (R)"            onclick="setPdfTool('rect')">▭</button>
-    <button class="ps-tool ${pdfTool==='ellipse'       ?'active':''}" id="pst-ellipse"       data-tip="Эллипс (E)"                   onclick="setPdfTool('ellipse')">◯</button>
-    <button class="ps-tool ${pdfTool==='line'          ?'active':''}" id="pst-line"          data-tip="Линия (L)"                    onclick="setPdfTool('line')">╱</button>
-    <button class="ps-tool" id="pst-image" data-tip="Изображение (I)" onclick="document.getElementById('ps-image-upload').click()">🖼</button>
-    <div class="ps-tool-sep"></div>
-    <button class="ps-tool ${pdfTool==='path'          ?'active':''}" id="pst-path"          data-tip="Перо — прямые линии (P) | двойной клик = завершить"   onclick="setPdfTool('path')" style="font-size:16px">✒</button>
-    <button class="ps-tool ${pdfTool==='bezier'        ?'active':''}" id="pst-bezier"        data-tip="Перо Безье — плавные кривые (B) | двойной клик = завершить" onclick="setPdfTool('bezier')" style="font-size:15px">〰</button>
-    <button class="ps-tool ${pdfTool==='freehand'      ?'active':''}" id="pst-freehand"      data-tip="Карандаш — рисуй от руки (F)"  onclick="setPdfTool('freehand')" style="font-size:16px">✏</button>
-    <button class="ps-tool ${pdfTool==='polygon-shape' ?'active':''}" id="pst-polygon-shape" data-tip="Многоугольник — клик по вершинам | клик на первую = замкнуть" onclick="setPdfTool('polygon-shape')" style="font-size:14px">⬠</button>
-    <button class="ps-tool ${pdfTool==='callout'       ?'active':''}" id="pst-callout"       data-tip="Выноска — 1й клик = острие, 2й клик = текстбокс"      onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
-    <button class="ps-tool" data-tip="Выноска с полочкой — подпись объекта" onclick="createPdfObj('leader',{name:'Выноска-полочка'})" style="font-size:14px">⌐</button>
-    <div class="ps-tool-sep"></div>
-    <button class="ps-tool" data-tip="Легенда"           onclick="addPdfLegend()">≡</button>
-    <button class="ps-tool" data-tip="Масштаб"           onclick="addPdfScale()">📏</button>
-    <button class="ps-tool" data-tip="Стрелка севера"    onclick="addPdfNorth()">🧭</button>
-    <button class="ps-tool" data-tip="Стрелка-указатель" onclick="createPdfObj('arrow',{name:'Стрелка'})">➡</button>
-    <button class="ps-tool" data-tip="Лупа — увеличенный фрагмент карты" onclick="addPdfInset()" style="font-size:16px">🔍</button>
-    <div class="ps-tool-sep" style="flex-basis:100%;height:0"></div>
-    <div style="width:100%;padding:3px 2px 2px;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px">🔎 Масштаб холста</div>
     <div style="display:flex;gap:2px;width:100%;align-items:center">
       <button class="ps-align-btn" style="font-size:15px" onclick="zoomCanvas(-0.15)" title="Уменьшить">−</button>
       <button class="ps-align-btn" style="flex:2;font-size:10px" onclick="_zoomMul=1;_applyOrientation()" title="Сбросить">⊙ ${Math.round(_zoomMul*100)}%</button>
       <button class="ps-align-btn" style="font-size:15px" onclick="zoomCanvas(0.15)" title="Увеличить">+</button>
     </div>
     <div style="display:flex;gap:2px;width:100%;margin-top:2px">
-      <button class="ps-align-btn" id="grid-btn" style="${_gridEnabled?'color:#60a5fa;border-color:#60a5fa':''}" onclick="toggleGrid()" title="Сетка">⊞ Сетка</button>
-      <button class="ps-align-btn" id="grid-snap-btn" style="${_gridSnap?'color:#60a5fa;border-color:#60a5fa':''}" onclick="toggleGridSnap()" title="Привязка к сетке">🧲 к сетке</button>
+      <button class="ps-align-btn" id="grid-btn" style="${_gridEnabled?'color:#60a5fa;border-color:#60a5fa':''}" onclick="toggleGrid()">⊞ Сетка</button>
+      <button class="ps-align-btn" id="grid-snap-btn" style="${_gridSnap?'color:#60a5fa;border-color:#60a5fa':''}" onclick="toggleGridSnap()">🧲 к сетке</button>
     </div>
-    <div class="ps-tool-sep" style="flex-basis:100%;height:0"></div>
-    <div style="width:100%;padding:3px 2px 2px;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px">⬛ Выравнивание</div>
-    <div style="display:flex;gap:2px;width:100%;flex-wrap:wrap">
-      <button class="ps-align-btn" title="По левому краю"  onclick="alignPdfObj('left')">⬛◁</button>
-      <button class="ps-align-btn" title="По центру (гор)" onclick="alignPdfObj('cx')">◁⬛▷</button>
-      <button class="ps-align-btn" title="По правому краю" onclick="alignPdfObj('right')">▷⬛</button>
-      <button class="ps-align-btn" title="По верху"        onclick="alignPdfObj('top')">△⬛</button>
-      <button class="ps-align-btn" title="По центру (вер)" onclick="alignPdfObj('cy')">△⬛▽</button>
-      <button class="ps-align-btn" title="По низу"         onclick="alignPdfObj('bottom')">▽⬛</button>
+    <div class="pdf-orient-row" style="width:100%;margin-top:4px">
+      <button class="orient-btn ${pdfOrientation==='landscape'?'active':''}" onclick="setPdfOrientation('landscape')">⇄ Альбом</button>
+      <button class="orient-btn ${pdfOrientation==='portrait' ?'active':''}" onclick="setPdfOrientation('portrait')">⇅ Книжн.</button>
     </div>
-    <label style="font-size:10px;color:#4b5563;display:flex;align-items:center;gap:5px;cursor:pointer;margin-top:3px;width:100%">
-      <input type="checkbox" id="snap-toggle" ${_snapEnabled?'checked':''} onchange="_snapEnabled=this.checked"> 🧲 Магнит
-    </label>
-    <div class="ps-tool-sep" style="flex-basis:100%;height:0"></div>
-    <div class="pdf-orient-row" style="width:100%;margin-top:3px">
-      <button class="orient-btn ${pdfOrientation==='landscape'?'active':''}" onclick="setPdfOrientation('landscape')">⇄ Альбомная</button>
-      <button class="orient-btn ${pdfOrientation==='portrait' ?'active':''}" onclick="setPdfOrientation('portrait')">⇅ Книжная</button>
-    </div>
-    <div style="padding:4px 0 2px;width:100%">
+    <div style="width:100%;padding:4px 0 2px">
+      <label style="font-size:10px;color:#4b5563;display:flex;align-items:center;gap:5px;cursor:pointer;margin-bottom:3px">
+        <input type="checkbox" id="snap-toggle" ${_snapEnabled?'checked':''} onchange="_snapEnabled=this.checked"> 🧲 Магнит
+      </label>
       <label style="font-size:10px;color:#4b5563;display:flex;align-items:center;gap:5px;cursor:pointer;margin-bottom:3px">
         <input type="checkbox" id="pdf-no-fill-szz" onchange="toggleFills()"> Убрать заливку СЗЗ
       </label>
@@ -1097,8 +1106,15 @@ function _buildToolbar() {
         <input type="checkbox" id="pdf-no-fill-zu"  onchange="toggleFills()"> Убрать заливку ЗУ
       </label>
     </div>
-  `; // Кнопки 🛰/✋/🎯 теперь в #pdf-map-bar (постоянная полоса над тулбаром)
-  // Синхронизируем их состояние
+    <div style="display:flex;gap:2px;width:100%;flex-wrap:wrap;margin-top:2px">
+      <button class="ps-align-btn" title="По левому краю"  onclick="alignPdfObj('left')">⬛◁</button>
+      <button class="ps-align-btn" title="По центру (гор)" onclick="alignPdfObj('cx')">◁⬛▷</button>
+      <button class="ps-align-btn" title="По правому краю" onclick="alignPdfObj('right')">▷⬛</button>
+      <button class="ps-align-btn" title="По верху"        onclick="alignPdfObj('top')">△⬛</button>
+      <button class="ps-align-btn" title="По центру (вер)" onclick="alignPdfObj('cy')">△⬛▽</button>
+      <button class="ps-align-btn" title="По низу"         onclick="alignPdfObj('bottom')">▽⬛</button>
+    </div>
+  `;
   const sb = document.getElementById('pdf-sat-btn');
   if (sb) { sb.textContent = pdfMapSat ? '🗺 Схема' : '🛰 Спутник'; sb.classList.toggle('active', pdfMapSat); }
   const db = document.getElementById('pdf-drag-btn');
@@ -1122,7 +1138,8 @@ function _buildActions() {
 function setPdfOrientation(o) {
   pdfOrientation = o;
   _applyOrientation();
-  _buildToolbar(); // обновить кнопки
+  _buildLeftToolbar();
+  _buildToolbar();
   _buildActions();
   setTimeout(() => { if (pdfMap) pdfMap.invalidateSize(); }, 350);
 }
@@ -1147,7 +1164,7 @@ function setPdfTool(t) {
   // Прерываем активное рисование пути при смене инструмента
   if (_pathDraft) _clearPathGhost();
   pdfTool = t;
-  document.querySelectorAll('.ps-tool[id^="pst-"]').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('[id^="pst-"]').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('pst-' + t);
   if (btn) btn.classList.add('active');
   const canvas = document.getElementById('pdf-canvas');
@@ -1156,20 +1173,20 @@ function setPdfTool(t) {
 
 // ── Создание объекта ──────────────────────────────
 const OBJ_DEFAULTS = {
-  text:    { w:220, h:52,  bg:'rgba(255,255,255,0.90)', color:'#0f172a', fontSize:18, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:6,   shadow:true,  strokeColor:'transparent', strokeW:0, content:'Заголовок', textShadow:false },
-  rect:    { w:160, h:90,  bg:'rgba(59,130,246,0.12)',  color:'#1e40af', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:false, strokeColor:'#3b82f6',     strokeW:2, content:'',          textShadow:false },
-  ellipse: { w:140, h:90,  bg:'rgba(34,197,94,0.12)',   color:'#166534', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:999, shadow:false, strokeColor:'#22c55e',     strokeW:2, content:'',          textShadow:false },
-  line:    { w:200, h:4,   bg:'transparent',             color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444', strokeW:4, content:'', textShadow:false },
-  legend:  { w:240, h:130, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:8,   shadow:true,  strokeColor:'transparent', strokeW:0, content:'__legend__', textShadow:false },
-  scale:   { w:170, h:52,  bg:'rgba(255,255,255,0.88)', color:'#0f172a', fontSize:12, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:true,  strokeColor:'transparent', strokeW:0, content:'__scale__',  textShadow:false },
-  north:   { w:60,  h:60,  bg:'rgba(255,255,255,0.82)', color:'#0f172a', fontSize:10, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:50,  shadow:true,  strokeColor:'transparent', strokeW:0, content:'__north__',  textShadow:false },
-  image:   { w:160, h:100, bg:'transparent',             color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'transparent', strokeW:0, content:'',           textShadow:false, imgSrc:'' },
-  inset:   { w:340, h:230, bg:'#ffffff',                color:'#0f172a',     fontSize:11, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4, shadow:true,  strokeColor:'#334155',     strokeW:2, content:'__inset__',  textShadow:false, insetZoom:0 },
-  arrow:   { w:200, h:30,  bg:'transparent',            color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444',     strokeW:3, content:'__arrow__',  textShadow:false, arrowDir:'end', rotation:0 },
-  path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, rotation:0 },
-  bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, rotation:0 },
-  callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a',     fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:true,  strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, rotation:0 },
-  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent',            color:'#0f172a',     fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:0, shadow:false, strokeColor:'#0f172a', strokeW:2, content:'Подпись объекта', textShadow:false, rotation:0 },
+  text:    { w:220, h:52,  bg:'rgba(255,255,255,0.90)', color:'#0f172a', fontSize:18, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:6,   shadow:false, strokeColor:'transparent', strokeW:0, content:'Заголовок', textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  rect:    { w:160, h:90,  bg:'rgba(59,130,246,0.12)',  color:'#1e40af', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:false, strokeColor:'#3b82f6',     strokeW:2, content:'',          textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  ellipse: { w:140, h:90,  bg:'rgba(34,197,94,0.12)',   color:'#166534', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:999, shadow:false, strokeColor:'#22c55e',     strokeW:2, content:'',          textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  line:    { w:200, h:4,   bg:'transparent',             color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444', strokeW:4, content:'', textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  legend:  { w:240, h:130, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:8,   shadow:false, strokeColor:'transparent', strokeW:0, content:'__legend__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  scale:   { w:170, h:52,  bg:'rgba(255,255,255,0.88)', color:'#0f172a', fontSize:12, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:false, strokeColor:'transparent', strokeW:0, content:'__scale__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  north:   { w:60,  h:60,  bg:'rgba(255,255,255,0.82)', color:'#0f172a', fontSize:10, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:50,  shadow:false, strokeColor:'transparent', strokeW:0, content:'__north__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  image:   { w:160, h:100, bg:'transparent',             color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'transparent', strokeW:0, content:'',           textShadow:false, textStrokeColor:'transparent', textStrokeW:0, imgSrc:'' },
+  inset:   { w:340, h:230, bg:'#ffffff',                color:'#0f172a',     fontSize:11, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4, shadow:false, strokeColor:'#334155',     strokeW:2, content:'__inset__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, insetZoom:0 },
+  arrow:   { w:200, h:30,  bg:'transparent',            color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444',     strokeW:3, content:'__arrow__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, arrowDir:'end', rotation:0 },
+  path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:false, strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left', radius:0, shadow:false, strokeColor:'#0f172a', strokeW:2, content:'Подпись объекта', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
 };
 
 function _typeName(type) {
@@ -1232,6 +1249,7 @@ function _renderObj(obj) {
     cursor:${obj.locked ? 'not-allowed' : pdfTool==='select' ? 'grab' : 'crosshair'};
     z-index:${100 + pdfObjects.indexOf(obj)};
     text-shadow:${d.textShadow ? '1px 1px 0 #fff,-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff' : 'none'};
+    -webkit-text-stroke:${(d.textStrokeW > 0) ? `${d.textStrokeW}px ${d.textStrokeColor || '#000'}` : '0'};
     padding:${d.type==='legend' ? '12px' : d.type==='scale' ? '5px 10px' : d.type==='text' ? '6px 12px' : '0'};
     user-select:none;
     transform:${d.rotation ? `rotate(${d.rotation}deg)` : 'none'};
@@ -1689,8 +1707,14 @@ function _renderProps() {
       <div class="pp-row">
         <span class="pp-lbl">Цвет текста</span>
         <input class="pp-color" type="color" id="pp-color" value="${d.color === 'transparent' ? '#000000' : d.color}" oninput="applyPdfProp()">
-        <span class="pp-lbl" style="margin-left:6px">Тень текста</span>
+        <span class="pp-lbl" style="margin-left:6px">Тень</span>
         <input type="checkbox" id="pp-tshadow" ${d.textShadow?'checked':''} onchange="applyPdfProp()">
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Обв. текста</span>
+        <input class="pp-color" type="color" id="pp-tsc" value="${(d.textStrokeColor && d.textStrokeColor !== 'transparent') ? d.textStrokeColor : '#000000'}" oninput="applyPdfProp()">
+        <input class="pp-inp-sm" type="number" id="pp-tsw" value="${d.textStrokeW || 0}" min="0" max="10" oninput="applyPdfProp()">
+        <span style="font-size:9px;color:#4b5563">px</span>
       </div>
       ` : ''}
 
@@ -1758,6 +1782,11 @@ function applyPdfProp() {
   if (document.getElementById('pp-align'))  d.textAlign  = document.getElementById('pp-align').value;
   if (document.getElementById('pp-tshadow'))d.textShadow = document.getElementById('pp-tshadow').checked;
   if (document.getElementById('pp-color'))  d.color      = document.getElementById('pp-color').value;
+  if (document.getElementById('pp-tsc') && document.getElementById('pp-tsw')) {
+    const tsw = parseInt(document.getElementById('pp-tsw').value) || 0;
+    d.textStrokeW     = tsw;
+    d.textStrokeColor = tsw > 0 ? document.getElementById('pp-tsc').value : 'transparent';
+  }
 
   const bgEl = document.getElementById('pp-bg'), alphaEl = document.getElementById('pp-alpha');
   if (bgEl && alphaEl) {
@@ -1993,6 +2022,14 @@ async function renderPdf() {
   const canvas = document.getElementById('pdf-canvas');
   const isLand = pdfOrientation === 'landscape';
 
+  // Сбрасываем transform чтобы карта не смещалась при захвате
+  const savedTransform = canvas.style.transform;
+  canvas.style.transform = 'none';
+  canvas.style.transformOrigin = 'top left';
+  if (pdfMap) pdfMap.invalidateSize(false);
+  Object.values(_insetMaps).forEach(m => { try { m.invalidateSize(false); } catch(e){} });
+  await new Promise(r => setTimeout(r, 250));
+
   try {
     const scale = window.devicePixelRatio * 2;
     const snap  = await html2canvas(canvas, {
@@ -2000,8 +2037,6 @@ async function renderPdf() {
       allowTaint: false,
       scale,
       backgroundColor: '#ffffff',
-      width:  canvas.offsetWidth,
-      height: canvas.offsetHeight,
       ignoreElements: el => el.classList && (el.classList.contains('ps-handle') || el.classList.contains('no-export')),
     });
 
@@ -2021,6 +2056,11 @@ async function renderPdf() {
     console.error(e);
   }
 
+  // Восстанавливаем transform
+  canvas.style.transform = savedTransform;
+  canvas.style.transformOrigin = 'center center';
+  if (pdfMap) pdfMap.invalidateSize(false);
+  Object.values(_insetMaps).forEach(m => { try { m.invalidateSize(false); } catch(e){} });
   _showExportOverlays(hiddenEls);
   if (btn) { btn.textContent = '💾 PDF'; btn.disabled = false; }
 }

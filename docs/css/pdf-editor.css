@@ -10,6 +10,59 @@
   background: #060a10;
 }
 
+/* ── ЛЕВЫЙ ТУЛБАР (Photoshop-style) ── */
+#pdf-left-toolbar {
+  width: 48px;
+  flex-shrink: 0;
+  background: #060a10;
+  border-right: 1px solid #1f2937;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  z-index: 10;
+}
+#pdf-left-toolbar::-webkit-scrollbar { display: none; }
+
+.ps-ltool {
+  width: 36px; height: 36px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #6b7280;
+  font-size: 15px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .12s;
+  position: relative;
+  font-family: var(--ui);
+  flex-shrink: 0;
+}
+.ps-ltool:hover { border-color: #374151; background: #161b27; color: #e2e8f0; }
+.ps-ltool.active { background: #1a2d50; border-color: #60a5fa; color: #60a5fa; }
+.ps-ltool-sep { width: 28px; height: 1px; background: #1f2937; margin: 3px 0; flex-shrink: 0; }
+
+/* Tooltip — справа от кнопки */
+.ps-ltool[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: #0d1117;
+  border: 1px solid #1f2937;
+  color: #e2e8f0;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 99999;
+}
+
 /* ── КАНВАС (карта + объекты) ── */
 #pdf-canvas-wrap {
   flex: 1;
@@ -25,7 +78,6 @@
 #pdf-canvas {
   position: relative;
   background: #fff;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.6);
   overflow: hidden;
   /* Размер задаётся через JS в зависимости от ориентации */
   transition: width .3s, height .3s;
@@ -141,9 +193,9 @@
 }
 .pdf-back-btn:hover { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,.08); }
 
-/* ── ТУЛБАР ── */
+/* ── ДОП. КОНТРОЛЫ (зум, сетка, ориентация, заливка, snap) ── */
 #pdf-toolbar {
-  padding: 8px;
+  padding: 7px 8px;
   background: #060a10;
   border-bottom: 1px solid #1f2937;
   display: flex;
@@ -151,7 +203,7 @@
   gap: 3px;
   flex-shrink: 0;
   overflow-y: auto;
-  max-height: 340px;
+  max-height: 220px;
   scrollbar-width: thin;
   scrollbar-color: #1f2937 transparent;
 }
@@ -242,7 +294,6 @@
   border-radius: 8px;
   padding: 4px;
   min-width: 190px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.6);
   font-family: var(--ui, system-ui);
   font-size: 12px;
 }
@@ -345,9 +396,10 @@
 /* ── ПАНЕЛЬ СВОЙСТВ ── */
 #pdf-props-panel {
   flex-shrink: 0;
+  border-top: 1px solid #1f2937;
   border-bottom: 1px solid #1f2937;
   overflow-y: auto;
-  max-height: 280px;
+  max-height: 300px;
   background: #0d1117;
 }
 #pdf-props-panel::-webkit-scrollbar { width: 3px; }
@@ -589,7 +641,6 @@
   border-radius: 3px;
   z-index: 10;
   pointer-events: all;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.35);
 }
 .ps-handle[data-h="nw"] { top: -7px; left: -7px; cursor: nwse-resize; }
 .ps-handle[data-h="n"]  { top: -7px; left: calc(50% - 7px); cursor: ns-resize; }
