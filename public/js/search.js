@@ -4,31 +4,39 @@
 
 'use strict';
 
-// Прямой доступ к ПКК через публичные CORS-прокси (GitHub Pages совместимо)
-const PKK_API = 'https://pkk5.rosreestr.ru/api';
+// ── Прокси ───────────────────────────────────────
+// Основной: Firebase Cloud Function (работает на Firebase Hosting)
+//   /api/** — rewrites в firebase.json направляют на Cloud Function
+// Резерв: публичные CORS-прокси (если Firebase недоступен / GitHub Pages)
+const FIREBASE_PROXY = '/api';
+const PKK_API = 'https://pkk.rosreestr.ru/api';
 const CORS_PROXIES = [
   'https://corsproxy.io/?',
   'https://api.allorigins.win/raw?url=',
-  'https://proxy.cors.sh/',
 ];
 
-let _activeProxy = null;
+// 'firebase' | 'cors:<url>' | null
+let _proxyMode = null;
 
-async function _findWorkingProxy() {
+async function _detectProxy() {
+  // 1. Попробовать Firebase Cloud Function /api/ping
+  try {
+    const r = await fetchSafe(`${FIREBASE_PROXY}/ping`, 4000);
+    if (r.ok) { const d = await r.json(); if (d && d.ok) { _proxyMode = 'firebase'; return true; } }
+  } catch(e) {}
+
+  // 2. Прямой запрос к ПКК через публичный CORS-прокси
   const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
-  for (const proxy of CORS_PROXIES) {
+  for (const p of CORS_PROXIES) {
     try {
-      const r = await fetchSafe(proxy + encodeURIComponent(testUrl), 8000);
+      const r = await fetchSafe(p + encodeURIComponent(testUrl), 7000);
       if (!r.ok) continue;
-      let d;
-      try { d = await r.json(); } catch(e) { continue; }
-      if (d && Array.isArray(d.features)) {
-        _activeProxy = proxy;
-        return true;
-      }
+      let d; try { d = await r.json(); } catch(e) { continue; }
+      if (d && Array.isArray(d.features)) { _proxyMode = 'cors:' + p; return true; }
     } catch(e) {}
   }
-  _activeProxy = null;
+
+  _proxyMode = null;
   return false;
 }
 
@@ -37,10 +45,10 @@ async function checkProxy() {
   const label = document.getElementById('proxy-label');
   dot.className = 'proxy-dot';
   label.textContent = 'Проверяю…';
-  const ok = await _findWorkingProxy();
+  const ok = await _detectProxy();
   if (ok) {
     dot.className = 'proxy-dot ok';
-    label.textContent = 'ПКК доступен ✓';
+    label.textContent = _proxyMode === 'firebase' ? 'Сервер подключён ✓' : 'ПКК доступен (резерв) ✓';
   } else {
     dot.className = 'proxy-dot err';
     label.textContent = 'Сервер недоступен';
@@ -48,15 +56,27 @@ async function checkProxy() {
 }
 
 async function fetchTile(minLat, maxLat, minLon, maxLon) {
-  if (!_activeProxy) {
-    const ok = await _findWorkingProxy();
-    if (!ok) throw new Error('ПКК недоступен через CORS-прокси');
+  if (!_proxyMode) {
+    const ok = await _detectProxy();
+    if (!ok) throw new Error('Сервер недоступен');
   }
-  const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
-  const r   = await fetchSafe(_activeProxy + encodeURIComponent(pkk), 30000);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data = await r.json();
-  return data.features || [];
+
+  if (_proxyMode === 'firebase') {
+    // Firebase Cloud Function: /api/pkk?bbox=lon1,lat1,lon2,lat2&limit=400
+    const url = `${FIREBASE_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
+    const r   = await fetchSafe(url, 30000);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    return data.features || [];
+  } else {
+    // CORS-прокси → напрямую в ПКК
+    const corsProxy = _proxyMode.replace('cors:', '');
+    const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
+    const r   = await fetchSafe(corsProxy + encodeURIComponent(pkk), 30000);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    return data.features || [];
+  }
 }
 
 async function searchParcels() {
@@ -73,10 +93,10 @@ async function searchParcels() {
   document.getElementById('btn-export-word').disabled = true;
   document.getElementById('res-cnt').textContent = '0';
 
-  if (!_activeProxy) {
-    const ok = await _findWorkingProxy();
+  if (!_proxyMode) {
+    const ok = await _detectProxy();
     if (!ok) {
-      setSt('ПКК недоступен — попробуй позже', 'err');
+      setSt('Сервер недоступен — попробуй позже', 'err');
       btn.disabled = false; return;
     }
   }
