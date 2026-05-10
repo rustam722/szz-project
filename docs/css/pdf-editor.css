@@ -111,6 +111,62 @@
   line-height: 22px !important; font-size: 14px !important;
 }
 
+/* Ручка поворота */
+.ps-rotate-handle {
+  position: absolute !important;
+  top: -32px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: 16px !important; height: 16px !important;
+  border-radius: 50% !important;
+  background: #f97316 !important;
+  border: 2px solid #fff !important;
+  cursor: grab !important;
+  z-index: 1000 !important;
+}
+.ps-rotate-handle:hover { background: #ea580c !important; transform: translateX(-50%) scale(1.2) !important; }
+/* Линия от ручки к объекту */
+.ps-rotate-handle::after {
+  content: '';
+  position: absolute;
+  bottom: -12px; left: 50%;
+  transform: translateX(-50%);
+  width: 1px; height: 12px;
+  background: rgba(249,115,22,.6);
+}
+
+/* Сетка на холсте */
+#pdf-canvas.show-grid {
+  background-image:
+    linear-gradient(rgba(99,102,241,.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,.12) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: 0 0;
+}
+
+/* Контекстное меню */
+#pdf-ctx-menu {
+  background: #0d1117;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 190px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  font-family: var(--ui, system-ui);
+  font-size: 12px;
+}
+.ctx-item {
+  padding: 6px 12px;
+  border-radius: 5px;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: background .1s;
+}
+.ctx-item:hover { background: #1e293b; color: #f1f5f9; }
+.ctx-item.danger { color: #f87171; }
+.ctx-item.danger:hover { background: #2d1010; }
+.ctx-sep { height: 1px; background: #1f2937; margin: 3px 4px; }
+
 /* Кнопки управления картой в PDF */
 .pdf-map-ctrl {
   width: 100%;
