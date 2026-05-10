@@ -84,6 +84,7 @@ function enterPdfMode() {
   _renderLayersList();
   _renderProps();
   _initCanvasZoomWheel();
+  _initCanvasDrawing();
   _initPathDrawing();
   _initSidebarResize();
 
@@ -143,6 +144,16 @@ function _initPdfMap() {
 
   // Масштаб
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(pdfMap);
+
+  // При изменении зума/позиции — обновляем объекты масштаба
+  pdfMap.on('zoomend moveend', () => {
+    setTimeout(() => {
+      pdfObjects.filter(o => o.type === 'scale').forEach(obj => {
+        const el = document.getElementById(obj.id);
+        if (el) _renderObjContent(el, obj);
+      });
+    }, 120);
+  });
 }
 
 // ── Обновить слои полигонов на pdf-карте (при смене проекта) ──
@@ -281,34 +292,59 @@ function _renderCalloutHtml(obj) {
   </div>`;
 }
 
-// ── Выноска с полочкой (leader line) ─────────────
+// ── Выноска с полочкой (GIS-style leader) ────────
 function _renderLeaderHtml(obj) {
   const d = obj.data;
   const w = d.w, h = d.h;
-  const sw = d.strokeW || 2;
+  const sw = d.strokeW || 1.5;
   const color = d.strokeColor || '#0f172a';
-  // Полочка — горизонтальная линия у нижней части текстового блока
-  const shelfY = h - 4;
-  // Точка стрелки (хвост) в локальных координатах
-  const lx = (d.tailX ?? d.x + w/2) - d.x;
-  const ly = (d.tailY ?? d.y + h + 40) - d.y;
-  // Линия от середины полочки до острия
-  const sx = w / 2;
-  // Наконечник стрелки
-  const ang = Math.atan2(ly - shelfY, lx - sx);
-  const ahl = 10;
-  const ax1x = (lx - ahl * Math.cos(ang - 0.45)).toFixed(1);
-  const ax1y = (ly - ahl * Math.sin(ang - 0.45)).toFixed(1);
-  const ax2x = (lx - ahl * Math.cos(ang + 0.45)).toFixed(1);
-  const ax2y = (ly - ahl * Math.sin(ang + 0.45)).toFixed(1);
+  const bg = (d.bg && d.bg !== 'transparent') ? d.bg : 'transparent';
+
+  // Tail point in local coordinates (may be outside bbox)
+  const tx = (d.tailX ?? d.x + w / 2) - d.x;
+  const ty = (d.tailY ?? d.y + h + 60) - d.y;
+
+  // Shelf sits at the BOTTOM edge of bbox
+  const shelfY = h - sw;
+
+  // Pick shelf anchor: end closest to tail
+  const dLeft  = Math.hypot(tx - 0, ty - shelfY);
+  const dRight = Math.hypot(tx - w, ty - shelfY);
+  const anchorX = dLeft <= dRight ? 0 : w;
+
+  // Direction from anchor to tail
+  const ang = Math.atan2(ty - shelfY, tx - anchorX);
+  const ahl = 9;
+  // Filled arrowhead triangle
+  const ax1x = (tx - ahl * Math.cos(ang - 0.38)).toFixed(1);
+  const ax1y = (ty - ahl * Math.sin(ang - 0.38)).toFixed(1);
+  const ax2x = (tx - ahl * Math.cos(ang + 0.38)).toFixed(1);
+  const ax2y = (ty - ahl * Math.sin(ang + 0.38)).toFixed(1);
+
+  const rad = d.radius || 0;
   return `<div style="position:absolute;inset:0;pointer-events:none;overflow:visible">
-    <svg style="position:absolute;inset:0;overflow:visible;width:${w}px;height:${h}px;pointer-events:none">
+    <svg style="position:absolute;left:0;top:0;overflow:visible;pointer-events:none" width="${w}" height="${h}">
+      <!-- Фон текстового блока -->
+      ${bg !== 'transparent' ? `<rect x="0" y="0" width="${w}" height="${shelfY}" fill="${bg}" rx="${rad}"/>` : ''}
+      <!-- Полочка -->
       <line x1="0" y1="${shelfY}" x2="${w}" y2="${shelfY}" stroke="${color}" stroke-width="${sw}"/>
-      <line x1="${sx}" y1="${shelfY}" x2="${lx.toFixed(1)}" y2="${ly.toFixed(1)}" stroke="${color}" stroke-width="${sw}"/>
-      <line x1="${lx.toFixed(1)}" y1="${ly.toFixed(1)}" x2="${ax1x}" y2="${ax1y}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>
-      <line x1="${lx.toFixed(1)}" y1="${ly.toFixed(1)}" x2="${ax2x}" y2="${ax2y}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>
+      <!-- Выноска от конца полочки к острию -->
+      <line x1="${anchorX}" y1="${shelfY}" x2="${tx.toFixed(1)}" y2="${ty.toFixed(1)}" stroke="${color}" stroke-width="${sw}"/>
+      <!-- Наконечник -->
+      <polygon points="${tx.toFixed(1)},${ty.toFixed(1)} ${ax1x},${ax1y} ${ax2x},${ax2y}" fill="${color}"/>
     </svg>
-    <div class="leader-text-inner" style="position:absolute;left:0;right:0;top:0;bottom:${h-shelfY+4}px;display:flex;align-items:flex-end;padding:2px 4px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};pointer-events:none;user-select:none;white-space:pre-wrap;word-break:break-word">${d.content||'Подпись'}</div>
+    <div class="leader-text-inner" style="
+      position:absolute;left:0;right:0;top:0;bottom:${sw + 2}px;
+      display:flex;align-items:flex-end;
+      padding:3px 8px;
+      font-size:${d.fontSize}px;color:${d.color};
+      font-family:${d.fontFamily};font-weight:${d.fontWeight};
+      font-style:${d.fontStyle||'normal'};
+      text-align:${d.textAlign||'left'};
+      pointer-events:none;user-select:none;
+      white-space:pre-wrap;word-break:break-word;
+      -webkit-text-stroke:${(d.textStrokeW>0)?`${d.textStrokeW}px ${d.textStrokeColor}`:'0'};
+    ">${d.content||'Подпись объекта'}</div>
   </div>`;
 }
 
@@ -995,10 +1031,15 @@ function togglePdfMapSat() {
   if (!pdfMap) return;
   if (_pdfTile) pdfMap.removeLayer(_pdfTile);
   pdfMapSat = !pdfMapSat;
-  _pdfTile = pdfMapSat
-    ? L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom:19 })
-    : L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 });
+  const satUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  const osmUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  _pdfTile = L.tileLayer(pdfMapSat ? satUrl : osmUrl, { maxZoom:19 });
   _pdfTile.addTo(pdfMap);
+  // Синхронизируем тайловый слой всех лупа-карт
+  Object.entries(_insetMaps).forEach(([id, imap]) => {
+    imap.eachLayer(l => { if (l instanceof L.TileLayer) imap.removeLayer(l); });
+    L.tileLayer(pdfMapSat ? satUrl : osmUrl, { maxZoom:19 }).addTo(imap);
+  });
   const btn = document.getElementById('pdf-sat-btn');
   if (btn) { btn.textContent = pdfMapSat ? '🗺 Схема' : '🛰 Спутник'; btn.classList.toggle('active', pdfMapSat); }
 }
@@ -1177,9 +1218,9 @@ const OBJ_DEFAULTS = {
   rect:    { w:160, h:90,  bg:'rgba(59,130,246,0.12)',  color:'#1e40af', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:false, strokeColor:'#3b82f6',     strokeW:2, content:'',          textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
   ellipse: { w:140, h:90,  bg:'rgba(34,197,94,0.12)',   color:'#166534', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:999, shadow:false, strokeColor:'#22c55e',     strokeW:2, content:'',          textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
   line:    { w:200, h:4,   bg:'transparent',             color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444', strokeW:4, content:'', textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
-  legend:  { w:240, h:130, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:8,   shadow:false, strokeColor:'transparent', strokeW:0, content:'__legend__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  legend:  { w:240, h:130, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left',   radius:8,   shadow:false, strokeColor:'transparent', strokeW:0, content:'__legend__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, legendStyle:0 },
   scale:   { w:170, h:52,  bg:'rgba(255,255,255,0.88)', color:'#0f172a', fontSize:12, fontFamily:'Segoe UI', fontWeight:'700', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4,   shadow:false, strokeColor:'transparent', strokeW:0, content:'__scale__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
-  north:   { w:60,  h:60,  bg:'rgba(255,255,255,0.82)', color:'#0f172a', fontSize:10, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:50,  shadow:false, strokeColor:'transparent', strokeW:0, content:'__north__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0 },
+  north:   { w:60,  h:60,  bg:'rgba(255,255,255,0.82)', color:'#0f172a', fontSize:10, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:50,  shadow:false, strokeColor:'transparent', strokeW:0, content:'__north__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, northStyle:0 },
   image:   { w:160, h:100, bg:'transparent',             color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'transparent', strokeW:0, content:'',           textShadow:false, textStrokeColor:'transparent', textStrokeW:0, imgSrc:'' },
   inset:   { w:340, h:230, bg:'#ffffff',                color:'#0f172a',     fontSize:11, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4, shadow:false, strokeColor:'#334155',     strokeW:2, content:'__inset__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, insetZoom:0 },
   arrow:   { w:200, h:30,  bg:'transparent',            color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444',     strokeW:3, content:'__arrow__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, arrowDir:'end', rotation:0 },
@@ -1284,38 +1325,112 @@ function _renderObjContent(el, obj) {
 }
 
 function _legendHtml(d) {
-  let html = `<div class="ps-legend-content"><div class="ps-legend-title" style="font-size:${d.fontSize+1}px;color:${d.color}">Условные обозначения:</div>`;
-  mapLayers.filter(l => l.visible).forEach(l => {
-    const bg  = hexToRgba(l.color, l.type === 'szz' ? 0.12 : 0.2);
-    const brd = l.type === 'szz' ? 'dashed' : 'solid';
-    html += `<div class="ps-legend-row"><div class="ps-legend-swatch" style="background:${bg};border:2px ${brd} ${l.color}"></div>
-      <span style="font-size:${d.fontSize}px;color:${d.color}">${l.name}</span></div>`;
-  });
-  if (foundParcels.filter(p => p.inP).length) {
-    html += `<div class="ps-legend-row"><div class="ps-legend-swatch" style="background:rgba(34,197,94,0.25);border:2px solid #16a34a"></div>
-      <span style="font-size:${d.fontSize}px;color:${d.color}">ЗУ внутри СЗЗ</span></div>`;
-    html += `<div class="ps-legend-row"><div class="ps-legend-swatch" style="background:rgba(245,158,11,0.25);border:2px solid #b45309"></div>
-      <span style="font-size:${d.fontSize}px;color:${d.color}">ЗУ на пересечении</span></div>`;
+  const sty = d.legendStyle || 0;
+  const fs = d.fontSize || 13;
+  const fc = d.color || '#0f172a';
+  const layers = mapLayers.filter(l => l.visible);
+  const parcels = foundParcels.filter(p => p.inP).length;
+
+  // Build items array
+  const items = layers.map(l => ({
+    bg: hexToRgba(l.color, l.type === 'szz' ? 0.12 : 0.2),
+    brd: l.type === 'szz' ? 'dashed' : 'solid',
+    color: l.color, name: l.name,
+  }));
+  if (parcels) {
+    items.push({ bg:'rgba(34,197,94,0.25)',  brd:'solid', color:'#16a34a', name:'ЗУ внутри СЗЗ' });
+    items.push({ bg:'rgba(245,158,11,0.25)', brd:'solid', color:'#b45309', name:'ЗУ на пересечении' });
   }
-  return html + '</div>';
+
+  const swatch = (it, sz=16) =>
+    `<div style="width:${sz}px;height:${sz}px;flex-shrink:0;background:${it.bg};border:2px ${it.brd} ${it.color};border-radius:2px"></div>`;
+
+  if (sty === 0) { // Стиль 1: Классический с заголовком
+    let h = `<div style="padding:4px 0 2px;font-size:${fs+1}px;font-weight:700;color:${fc};border-bottom:1px solid ${fc}30;margin-bottom:4px">Условные обозначения</div>`;
+    items.forEach(it => { h += `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">${swatch(it)}<span style="font-size:${fs}px;color:${fc}">${it.name}</span></div>`; });
+    return `<div style="padding:8px 10px;width:100%;box-sizing:border-box">${h}</div>`;
+  }
+  if (sty === 1) { // Стиль 2: Рамки вокруг каждой строки
+    let h = `<div style="font-size:${fs}px;font-weight:700;color:${fc};margin-bottom:6px">Легенда</div>`;
+    items.forEach(it => { h += `<div style="display:flex;align-items:center;gap:6px;padding:3px 5px;border-radius:4px;border:1px solid ${it.color}40;margin-bottom:2px">${swatch(it)}<span style="font-size:${fs}px;color:${fc}">${it.name}</span></div>`; });
+    return `<div style="padding:8px;width:100%;box-sizing:border-box">${h}</div>`;
+  }
+  if (sty === 2) { // Стиль 3: Минимальный (нет фона)
+    let h = '';
+    items.forEach(it => { h += `<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px"><div style="width:24px;height:3px;background:${it.color};flex-shrink:0"></div><span style="font-size:${fs}px;color:${fc}">${it.name}</span></div>`; });
+    return `<div style="padding:6px 8px;width:100%;box-sizing:border-box">${h}</div>`;
+  }
+  if (sty === 3) { // Стиль 4: Горизонтальный компактный
+    let h = '';
+    items.forEach(it => { h += `<div style="display:inline-flex;align-items:center;gap:4px;margin:0 8px 4px 0">${swatch(it,12)}<span style="font-size:${fs-1}px;color:${fc}">${it.name}</span></div>`; });
+    return `<div style="padding:6px 8px;width:100%;box-sizing:border-box;display:flex;flex-wrap:wrap">${h}</div>`;
+  }
+  return `<div style="padding:8px">${items.map(it => `<div style="display:flex;gap:5px;align-items:center;margin-bottom:3px">${swatch(it)}<span style="font-size:${fs}px;color:${fc}">${it.name}</span></div>`).join('')}</div>`;
 }
 
 function _scaleHtml(d) {
-  const sc   = document.querySelector('.leaflet-control-scale-line');
-  const text = sc ? sc.innerHTML : '100 м';
-  const w    = sc ? sc.style.width : '80px';
+  // Читаем актуальный масштаб из pdf-карты (а не из основной)
+  const scEl = document.querySelector('#pdf-map .leaflet-control-scale-line');
+  const text = scEl ? scEl.innerHTML : (document.querySelector('.leaflet-control-scale-line')?.innerHTML || '100 м');
+  const w    = scEl ? scEl.style.width : '80px';
   return `<div class="ps-scale-content" style="color:${d.color}">
     <span style="font-size:${d.fontSize}px;font-weight:700">${text}</span>
-    <div class="ps-scale-bar" style="width:${w};color:${d.color}"></div>
+    <div class="ps-scale-bar" style="width:${w};border-top:2px solid ${d.color};border-left:2px solid ${d.color};border-right:2px solid ${d.color};height:5px;margin-top:2px"></div>
   </div>`;
 }
 
 function _northHtml(d) {
-  return `<svg class="ps-north-svg" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
-    <polygon points="20,4 27,36 20,29 13,36" fill="${d.color}" opacity="0.9"/>
-    <text x="20" y="23" font-family="${d.fontFamily}" font-size="9" font-weight="bold"
-          fill="${d.bg !== 'transparent' ? d.bg : '#fff'}" text-anchor="middle" dominant-baseline="middle">С</text>
-  </svg>`;
+  const c = d.color || '#0f172a';
+  const bg = (d.bg && d.bg !== 'transparent') ? d.bg : '#fff';
+  const s = d.northStyle || 0;
+  const svgs = [
+    // 0: Classic split needle
+    `<polygon points="20,3 25,35 20,28 15,35" fill="${c}"/>
+     <polygon points="20,3 25,35 20,28 15,35" fill="${bg}" clip-path="url(#nh0)"/>
+     <defs><clipPath id="nh0"><rect x="20" y="0" width="20" height="40"/></clipPath></defs>
+     <text x="20" y="15" font-size="9" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+    // 1: Compass needle with circle
+    `<circle cx="20" cy="20" r="16" fill="none" stroke="${c}" stroke-width="1.5"/>
+     <polygon points="20,4 24,20 20,16 16,20" fill="${c}"/>
+     <polygon points="20,36 24,20 20,24 16,20" fill="${bg}" stroke="${c}" stroke-width="1"/>
+     <text x="20" y="10" font-size="7" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+    // 2: Simple N arrow
+    `<line x1="20" y1="36" x2="20" y2="8" stroke="${c}" stroke-width="2"/>
+     <polygon points="20,4 26,16 20,13 14,16" fill="${c}"/>
+     <text x="20" y="13" font-size="8" font-weight="bold" fill="${bg}" text-anchor="middle">С</text>`,
+    // 3: Cross compass rose
+    `<polygon points="20,2 23,17 20,14 17,17" fill="${c}"/>
+     <polygon points="20,38 23,23 20,26 17,23" fill="${bg}" stroke="${c}" stroke-width="1"/>
+     <polygon points="2,20 17,17 14,20 17,23" fill="${bg}" stroke="${c}" stroke-width="1"/>
+     <polygon points="38,20 23,17 26,20 23,23" fill="${bg}" stroke="${c}" stroke-width="1"/>
+     <text x="20" y="12" font-size="7" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+    // 4: Star 8-point
+    `<polygon points="20,2 22,16 28,10 22,18 38,20 22,22 28,30 22,24 20,38 18,24 12,30 18,22 2,20 18,18 12,10 18,16" fill="${c}" opacity="0.85"/>
+     <circle cx="20" cy="20" r="3" fill="${bg}"/>
+     <text x="20" y="10" font-size="6" font-weight="bold" fill="${bg}" text-anchor="middle">С</text>`,
+    // 5: Military style
+    `<rect x="18" y="6" width="4" height="28" fill="${c}" rx="1"/>
+     <polygon points="20,2 27,12 13,12" fill="${c}"/>
+     <text x="20" y="8" font-size="7" font-weight="bold" fill="${bg}" text-anchor="middle">С</text>`,
+    // 6: Minimal line + N
+    `<line x1="20" y1="32" x2="20" y2="12" stroke="${c}" stroke-width="1.5"/>
+     <text x="20" y="11" font-size="11" font-weight="bold" font-family="serif" fill="${c}" text-anchor="middle">С</text>
+     <circle cx="20" cy="32" r="2.5" fill="${c}"/>`,
+    // 7: Traditional cartographic
+    `<polygon points="20,3 26,38 20,30 14,38" fill="${c}"/>
+     <polygon points="20,3 14,38 20,30 26,38" fill="${bg}" stroke="${c}" stroke-width="0.5"/>
+     <circle cx="20" cy="20" r="2" fill="${c}"/>
+     <text x="20" y="29" font-size="6" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+    // 8: Circle badge
+    `<circle cx="20" cy="24" r="14" fill="${bg}" stroke="${c}" stroke-width="1.5"/>
+     <polygon points="20,4 23,20 20,17 17,20" fill="${c}"/>
+     <text x="20" y="34" font-size="9" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+    // 9: Double chevron
+    `<polyline points="14,30 20,6 26,30" fill="none" stroke="${c}" stroke-width="2.5" stroke-linejoin="round"/>
+     <polyline points="14,38 20,14 26,38" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round" opacity="0.5"/>
+     <text x="20" y="10" font-size="7" font-weight="bold" fill="${c}" text-anchor="middle">С</text>`,
+  ];
+  return `<svg class="ps-north-svg" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">${svgs[s] || svgs[0]}</svg>`;
 }
 
 // ── Хендлы изменения размера ──────────────────────
@@ -1649,6 +1764,14 @@ function movePdfObjDown() {
   _renderAll(); _renderLayersList(); _saveState();
 }
 
+const PDF_FONTS = [
+  'Segoe UI','Arial','Times New Roman','Georgia','Courier New','Tahoma','Verdana',
+  'Impact','Trebuchet MS','Arial Black','Comic Sans MS','Calibri','Cambria',
+  'Consolas','Palatino Linotype','Garamond','Century Gothic','Franklin Gothic Medium',
+  'Lucida Console','Lucida Sans Unicode','Arial Narrow','Book Antiqua',
+  'PT Sans','PT Serif','Roboto','Open Sans','Lato','Montserrat','Oswald','Nunito',
+];
+
 // ── Панель свойств ────────────────────────────────
 function _renderProps() {
   const panel = document.getElementById('pdf-props-panel');
@@ -1662,12 +1785,34 @@ function _renderProps() {
 
   const bgHex = _rgbaToHex(d.bg);
   const alpha  = _rgbaAlpha(d.bg);
-  // Текстовые настройки только для объектов с редактируемым или значимым текстом
   const showText = ['text','callout','leader','rect','ellipse'].includes(obj.type);
+  const isNorth  = obj.type === 'north';
+  const isLegend = obj.type === 'legend';
+
+  const fontOpts = PDF_FONTS.map(f => `<option ${d.fontFamily===f?'selected':''}>${f}</option>`).join('');
 
   panel.innerHTML = `
-    <div class="pp-title">⚙ Свойства: <span style="color:#60a5fa;text-transform:none">${obj.name}</span></div>
+    <div class="pp-title">⚙ <span style="color:#60a5fa;text-transform:none">${obj.name}</span></div>
     <div class="pp-body">
+
+      ${isNorth ? `
+      <div class="pp-row">
+        <span class="pp-lbl">Стиль</span>
+        <div style="display:flex;gap:2px;flex-wrap:wrap;flex:1">
+          ${[0,1,2,3,4,5,6,7,8,9].map(i=>`<button onclick="applyNorthStyle(${i})" style="width:26px;height:26px;font-size:9px;border-radius:3px;border:1px solid ${(d.northStyle||0)===i?'#60a5fa':'#1f2937'};background:${(d.northStyle||0)===i?'#1a2d50':'#161b27'};color:${(d.northStyle||0)===i?'#60a5fa':'#6b7280'};cursor:pointer">${i+1}</button>`).join('')}
+        </div>
+      </div>
+      <div class="pp-sep"></div>` : ''}
+
+      ${isLegend ? `
+      <div class="pp-row">
+        <span class="pp-lbl">Стиль</span>
+        <div style="display:flex;gap:3px;flex:1">
+          ${['Классика','Рамки','Мин.','Горизонт.'].map((n,i)=>`<button onclick="applyLegendStyle(${i})" style="flex:1;padding:3px 2px;font-size:9px;border-radius:4px;border:1px solid ${(d.legendStyle||0)===i?'#60a5fa':'#1f2937'};background:${(d.legendStyle||0)===i?'#1a2d50':'#161b27'};color:${(d.legendStyle||0)===i?'#60a5fa':'#6b7280'};cursor:pointer">${n}</button>`).join('')}
+        </div>
+      </div>
+      <div class="pp-sep"></div>` : ''}
+
       <div class="pp-row">
         <span class="pp-lbl">X / Y</span>
         <input class="pp-inp-sm" type="number" id="pp-x" value="${Math.round(d.x)}" oninput="applyPdfProp()">
@@ -1682,21 +1827,33 @@ function _renderProps() {
       </div>
       <div class="pp-sep"></div>
 
+      <!-- Быстрая заливка -->
+      <div class="pp-row">
+        <span class="pp-lbl">Заливка</span>
+        <input class="pp-color" type="color" id="pp-bg" value="${bgHex}" oninput="applyPdfProp()" style="width:32px;height:32px">
+        <input class="pp-slider" type="range" id="pp-alpha" min="0" max="100" value="${Math.round(alpha*100)}" oninput="applyPdfProp()">
+        <span id="pp-alpha-val" style="font-size:10px;color:#6b7280;min-width:28px">${Math.round(alpha*100)}%</span>
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Контур</span>
+        <input class="pp-color" type="color" id="pp-stroke" value="${d.strokeColor==='transparent'?'#334155':d.strokeColor}" oninput="applyPdfProp()">
+        <input class="pp-inp-sm" type="number" id="pp-sw" value="${d.strokeW}" min="0" max="20" oninput="applyPdfProp()">
+        <span style="font-size:9px;color:#4b5563">px</span>
+      </div>
+
       ${showText ? `
+      <div class="pp-sep"></div>
       <div class="pp-row">
         <span class="pp-lbl">Шрифт</span>
-        <select class="pp-inp" id="pp-font" onchange="applyPdfProp()">
-          ${['Segoe UI','Arial','Times New Roman','Georgia','Courier New','Tahoma','Verdana']
-            .map(f => `<option ${d.fontFamily===f?'selected':''}>${f}</option>`).join('')}
-        </select>
+        <select class="pp-inp" id="pp-font" onchange="applyPdfProp()">${fontOpts}</select>
         <input class="pp-inp-sm" type="number" id="pp-fsize" value="${d.fontSize}" min="6" max="120" oninput="applyPdfProp()" style="width:42px">
       </div>
       <div class="pp-row">
         <span class="pp-lbl">Стиль</span>
         <div class="pp-style-btns">
-          <button class="pp-sbtn ${d.fontWeight==='700'?'active':''}" id="pp-bold"   onclick="togglePdfFontStyle('bold')"      style="font-weight:700">B</button>
-          <button class="pp-sbtn ${d.fontStyle==='italic'?'active':''}" id="pp-ital" onclick="togglePdfFontStyle('italic')"     style="font-style:italic">I</button>
-          <button class="pp-sbtn ${d.textDecoration==='underline'?'active':''}" id="pp-ul" onclick="togglePdfFontStyle('underline')" style="text-decoration:underline">U</button>
+          <button class="pp-sbtn ${d.fontWeight==='700'?'active':''}" onclick="togglePdfFontStyle('bold')" style="font-weight:700">B</button>
+          <button class="pp-sbtn ${d.fontStyle==='italic'?'active':''}" onclick="togglePdfFontStyle('italic')" style="font-style:italic">I</button>
+          <button class="pp-sbtn ${d.textDecoration==='underline'?'active':''}" onclick="togglePdfFontStyle('underline')" style="text-decoration:underline">U</button>
           <select class="pp-inp" id="pp-align" onchange="applyPdfProp()" style="flex:1;font-size:11px;padding:2px">
             <option value="left"   ${d.textAlign==='left'   ?'selected':''}>← Лево</option>
             <option value="center" ${d.textAlign==='center' ?'selected':''}>↔ Центр</option>
@@ -1705,39 +1862,23 @@ function _renderProps() {
         </div>
       </div>
       <div class="pp-row">
-        <span class="pp-lbl">Цвет текста</span>
+        <span class="pp-lbl">Цвет</span>
         <input class="pp-color" type="color" id="pp-color" value="${d.color === 'transparent' ? '#000000' : d.color}" oninput="applyPdfProp()">
-        <span class="pp-lbl" style="margin-left:6px">Тень</span>
+        <span class="pp-lbl" style="margin-left:4px">Тень</span>
         <input type="checkbox" id="pp-tshadow" ${d.textShadow?'checked':''} onchange="applyPdfProp()">
-      </div>
-      <div class="pp-row">
-        <span class="pp-lbl">Обв. текста</span>
+        <span class="pp-lbl" style="margin-left:4px">Обв.</span>
         <input class="pp-color" type="color" id="pp-tsc" value="${(d.textStrokeColor && d.textStrokeColor !== 'transparent') ? d.textStrokeColor : '#000000'}" oninput="applyPdfProp()">
-        <input class="pp-inp-sm" type="number" id="pp-tsw" value="${d.textStrokeW || 0}" min="0" max="10" oninput="applyPdfProp()">
-        <span style="font-size:9px;color:#4b5563">px</span>
+        <input class="pp-inp-sm" type="number" id="pp-tsw" value="${d.textStrokeW || 0}" min="0" max="10" oninput="applyPdfProp()" style="width:34px">
       </div>
       ` : ''}
 
       <div class="pp-sep"></div>
       <div class="pp-row">
-        <span class="pp-lbl">Фон</span>
-        <input class="pp-color" type="color" id="pp-bg" value="${bgHex}" oninput="applyPdfProp()">
-        <input class="pp-slider" type="range" id="pp-alpha" min="0" max="100" value="${Math.round(alpha*100)}" oninput="applyPdfProp()">
-        <span id="pp-alpha-val" style="font-size:10px;color:#6b7280;min-width:28px">${Math.round(alpha*100)}%</span>
+        <span class="pp-lbl">Скругл.</span>
+        <input class="pp-slider" type="range" id="pp-radius" min="0" max="200" value="${d.radius||0}" oninput="applyPdfProp()">
       </div>
       <div class="pp-row">
-        <span class="pp-lbl">Обводка</span>
-        <input class="pp-color" type="color" id="pp-stroke" value="${d.strokeColor==='transparent'?'#334155':d.strokeColor}" oninput="applyPdfProp()">
-        <input class="pp-inp-sm" type="number" id="pp-sw" value="${d.strokeW}" min="0" max="20" oninput="applyPdfProp()">
-      </div>
-      <div class="pp-row">
-        <span class="pp-lbl">Скругление</span>
-        <input class="pp-slider" type="range" id="pp-radius" min="0" max="100" value="${d.radius}" oninput="applyPdfProp()">
-        <span class="pp-lbl" style="margin-left:5px">Тень блока</span>
-        <input type="checkbox" id="pp-shadow" ${d.shadow?'checked':''} onchange="applyPdfProp()">
-      </div>
-      <div class="pp-row">
-        <span class="pp-lbl">Поворот °</span>
+        <span class="pp-lbl">Поворот</span>
         <input class="pp-slider" type="range" id="pp-rotation" min="-180" max="180" value="${d.rotation||0}" oninput="applyPdfProp()">
         <input class="pp-inp-sm" type="number" id="pp-rotation-val" value="${d.rotation||0}" min="-180" max="180" style="width:44px" oninput="document.getElementById('pp-rotation').value=this.value;applyPdfProp()">
         <button style="font-size:10px;padding:2px 5px;border:1px solid #374151;border-radius:4px;background:#1f2937;color:#94a3b8;cursor:pointer;margin-left:2px" onclick="_resetRotation()">↺</button>
@@ -1750,6 +1891,19 @@ function _renderProps() {
       </div>
     </div>
   `;
+}
+
+function applyNorthStyle(s) {
+  const obj = pdfObjects.find(o => o.id === pdfSelId);
+  if (!obj) return;
+  obj.data.northStyle = s;
+  _renderObj(obj); _renderProps(); _saveState();
+}
+function applyLegendStyle(s) {
+  const obj = pdfObjects.find(o => o.id === pdfSelId);
+  if (!obj) return;
+  obj.data.legendStyle = s;
+  _renderObj(obj); _renderProps(); _saveState();
 }
 
 function _syncPropsXY() {

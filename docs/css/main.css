@@ -652,6 +652,37 @@ textarea {
 .modal-body::-webkit-scrollbar { width: 4px; }
 .modal-body::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 2px; }
 
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg3);
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  color: var(--tx);
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  font-family: var(--ui);
+  margin-top: 3px;
+}
+.modal-input:focus { border-color: var(--acc); }
+.src-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  margin-bottom: 5px;
+  background: var(--bg3);
+  font-size: 12px;
+}
+.src-item-icon { font-size: 16px; }
+.src-item-name { flex:1; color: var(--tx); font-weight:500; }
+.src-item-meta { font-size:10px; color: var(--tx2); }
+.src-del { background:none; border:none; cursor:pointer; color:var(--tx2); font-size:14px; padding:2px 5px; border-radius:4px; }
+.src-del:hover { color:#ef4444; background:rgba(239,68,68,.1); }
+
 /* Карточки проектов */
 .project-card {
   display: flex;

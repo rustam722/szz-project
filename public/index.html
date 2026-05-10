@@ -140,6 +140,7 @@
           <button class="btn" id="btn-export" onclick="exportCSV()" disabled style="flex:1">⬇ CSV</button>
           <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Word</button>
         </div>
+        <button class="btn" onclick="openSourcesModal()" style="margin-top:5px;border-color:#f59e0b;color:#fbbf24;background:#1c1003">📍 Источники</button>
         <button class="btn" onclick="enterPdfMode()" style="margin-top:5px;border-color:#6366f1;color:#a5b4fc;background:#1e1b4b">📄 Карта PDF</button>
       </div>
 
@@ -218,6 +219,99 @@
 
 <input type="file" id="ps-image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(event)">
 <input type="file" id="logo-upload-input" accept="image/*" style="display:none" onchange="handleLogoUpload(event)">
+<input type="file" id="sources-csv-input" accept=".csv,.txt" style="display:none" onchange="importSourcesCSV(event)">
+
+<!-- ══ МОДАЛ ИСТОЧНИКОВ ══ -->
+<div id="sources-modal" style="display:none">
+  <div class="modal-bg" onclick="closeSourcesModal()"></div>
+  <div class="modal" style="width:540px;max-width:96vw">
+    <div class="modal-hdr">
+      <h2>📍 Источники выбросов и шума</h2>
+      <button class="modal-close" onclick="closeSourcesModal()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:14px">
+      <!-- Вкладки -->
+      <div style="display:flex;gap:4px;margin-bottom:12px">
+        <button class="btn" id="src-tab-add" onclick="srcTab('add')" style="flex:1;border-color:#f59e0b;color:#fbbf24">➕ Добавить</button>
+        <button class="btn" id="src-tab-list" onclick="srcTab('list')" style="flex:1">📋 Список</button>
+        <button class="btn" id="src-tab-import" onclick="srcTab('import')" style="flex:1">📂 Импорт CSV</button>
+      </div>
+
+      <!-- Панель добавления -->
+      <div id="src-panel-add">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Название</label>
+            <input type="text" id="src-name" class="modal-input" placeholder="Источник 1">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Тип</label>
+            <select id="src-type" class="modal-input">
+              <option value="emission">💨 Выброс (атм.)</option>
+              <option value="noise">🔊 Шум</option>
+              <option value="radiation">☢ Радиация</option>
+              <option value="vibration">📳 Вибрация</option>
+              <option value="other">📌 Прочее</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--tx2);margin-bottom:6px">Координаты точечного источника (WGS-84):</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Широта (lat)</label>
+            <input type="number" id="src-lat" class="modal-input" placeholder="59.9343" step="0.000001">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Долгота (lon)</label>
+            <input type="number" id="src-lon" class="modal-input" placeholder="30.3351" step="0.000001">
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--tx2);margin-bottom:4px">Или линейный источник (4 координаты):</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">
+          <input type="number" id="src-lat2" class="modal-input" placeholder="lat2" step="0.000001">
+          <input type="number" id="src-lon2" class="modal-input" placeholder="lon2" step="0.000001">
+          <input type="number" id="src-lat3" class="modal-input" placeholder="lat3" step="0.000001">
+          <input type="number" id="src-lon3" class="modal-input" placeholder="lon3" step="0.000001">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Радиус/Ширина зоны (м)</label>
+            <input type="number" id="src-radius" class="modal-input" placeholder="50" min="0">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--tx2)">Цвет</label>
+            <input type="color" id="src-color" value="#ef4444" style="width:100%;height:34px;border-radius:6px;border:1px solid var(--bd);cursor:pointer">
+          </div>
+        </div>
+        <button class="btn pri" onclick="addSource()" style="width:100%">➕ Добавить на карту</button>
+      </div>
+
+      <!-- Панель списка -->
+      <div id="src-panel-list" style="display:none">
+        <div id="src-list-body" style="max-height:320px;overflow-y:auto"></div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn warn" onclick="clearAllSources()" style="flex:1">✕ Удалить все</button>
+          <button class="btn" onclick="fitSourcesBounds()" style="flex:1">⊡ Перейти</button>
+        </div>
+      </div>
+
+      <!-- Панель импорта -->
+      <div id="src-panel-import" style="display:none">
+        <div style="font-size:12px;color:var(--tx2);margin-bottom:8px;line-height:1.6">
+          Формат CSV (через запятую или точку с запятой):<br>
+          <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:11px">название; тип; lat; lon; радиус(м)</code><br>
+          <code style="background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:11px">название; тип; lat1; lon1; lat2; lon2; ширина(м)</code><br>
+          <span style="color:#6b7280;font-size:10px">Типы: emission/выброс, noise/шум, radiation/радиация, vibration/вибрация, other</span>
+        </div>
+        <textarea id="src-csv-text" rows="8" style="width:100%;box-sizing:border-box;background:var(--bg3);border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:8px;font-size:11px;font-family:monospace;resize:vertical" placeholder="Котельная №1; emission; 59.9343; 30.3351; 100&#10;Дорога А181; noise; 59.920; 30.300; 59.915; 30.310; 50"></textarea>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn" onclick="document.getElementById('sources-csv-input').click()" style="flex:1">📂 Файл CSV</button>
+          <button class="btn pri" onclick="importSourcesText()" style="flex:1">✓ Импортировать</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ══ ПРОЕКТЫ через localStorage ══ -->
 <script>
@@ -378,6 +472,7 @@
 <script src="js/utils.js"></script>
 <script src="js/map.js"></script>
 <script src="js/search.js"></script>
+<script src="js/sources.js"></script>
 <script src="js/pdf-editor.js"></script>
 <script src="js/export.js"></script>
 <script src="js/main.js"></script>
