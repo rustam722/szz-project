@@ -46,16 +46,69 @@
   z-index: 0;
 }
 
+/* ── РАЗДЕЛИТЕЛЬ (ресайзер) ── */
+#pdf-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  background: #1f2937;
+  cursor: col-resize;
+  position: relative;
+  transition: background .15s;
+  z-index: 10;
+}
+#pdf-resize-handle:hover,
+#pdf-resize-handle.dragging { background: #3b82f6; }
+#pdf-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  width: 1px;
+  height: 40px;
+  background: rgba(148,163,184,.3);
+  border-radius: 1px;
+}
+
 /* ── ПРАВАЯ ПАНЕЛЬ ── */
 #pdf-sidebar {
   width: 280px;
+  min-width: 180px;
+  max-width: 560px;
   flex-shrink: 0;
   background: #0d1117;
-  border-left: 1px solid #1f2937;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ── ШАПКА САЙДБАРА (всегда видна) ── */
+#pdf-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #060a10;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.pdf-back-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+  background: #161b27;
+  color: #94a3b8;
+  font-size: 12px;
+  font-family: var(--ui);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.pdf-back-btn:hover { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,.08); }
 
 /* ── ТУЛБАР ── */
 #pdf-toolbar {
@@ -66,7 +119,13 @@
   flex-wrap: wrap;
   gap: 3px;
   flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 340px;
+  scrollbar-width: thin;
+  scrollbar-color: #1f2937 transparent;
 }
+#pdf-toolbar::-webkit-scrollbar { width: 3px; }
+#pdf-toolbar::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 2px; }
 
 .ps-tool {
   width: 34px; height: 34px;

@@ -175,7 +175,15 @@
   <div id="pdf-canvas-wrap">
     <div id="pdf-canvas" tabindex="0"></div>
   </div>
+  <div id="pdf-resize-handle" title="Потяни чтобы изменить ширину панели"></div>
   <div id="pdf-sidebar">
+    <div id="pdf-sidebar-header">
+      <button class="pdf-back-btn" onclick="exitPdfMode()">← Карта</button>
+      <div style="display:flex;gap:4px;flex:1;justify-content:flex-end">
+        <button class="pdf-back-btn" style="border-color:#1d4ed8;color:#60a5fa;background:#0f172a" onclick="renderPdf()" title="Сохранить PDF">💾 PDF</button>
+        <button class="pdf-back-btn" style="border-color:#166534;color:#4ade80;background:#052e16" onclick="exportPng()" title="Сохранить PNG">🖼 PNG</button>
+      </div>
+    </div>
     <div id="pdf-toolbar"></div>
     <div id="pdf-props-panel"></div>
     <div id="pdf-layers-panel"></div>

@@ -85,6 +85,7 @@ function enterPdfMode() {
   _renderProps();
   _initCanvasZoomWheel();
   _initPathDrawing();
+  _initSidebarResize();
 
   setSt('Режим редактора PDF — выбирай объекты и настраивай', 'ok');
 }
@@ -559,6 +560,48 @@ function _initCanvasZoomWheel() {
     e.preventDefault();
     zoomCanvas(e.deltaY < 0 ? 0.1 : -0.1);
   }, { passive: false });
+}
+
+// ── Ресайз панели инструментов ────────────────────
+function _initSidebarResize() {
+  const handle  = document.getElementById('pdf-resize-handle');
+  const sidebar = document.getElementById('pdf-sidebar');
+  if (!handle || !sidebar) return;
+  if (handle._resizeBound) return;
+  handle._resizeBound = true;
+
+  let startX = 0, startW = 0;
+
+  handle.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('dragging');
+    startX = e.clientX;
+    startW = sidebar.offsetWidth;
+
+    function onMove(ev) {
+      // Тянем влево → панель шире; вправо → уже
+      const delta = startX - ev.clientX;
+      const newW  = Math.max(180, Math.min(600, startW + delta));
+      sidebar.style.width = newW + 'px';
+      // Перерисовать масштаб холста
+      _applyOrientation();
+      if (pdfMap) pdfMap.invalidateSize();
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      // Финальный пересчёт
+      setTimeout(() => {
+        _applyOrientation();
+        if (pdfMap) pdfMap.invalidateSize();
+        Object.values(_insetMaps).forEach(m => m.invalidateSize());
+      }, 50);
+    }
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+  });
 }
 
 // ── Grid ──────────────────────────────────────────
