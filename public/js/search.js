@@ -12,7 +12,7 @@
 
 const LOCAL_PROXY    = 'http://127.0.0.1:8765';
 // ▼ После деплоя Cloudflare Worker вставь сюда свой URL:
-const CF_WORKER      = 'https://pkk-proxy.YOUR_SUBDOMAIN.workers.dev';
+const CF_WORKER      = 'https://pkk-proxy.rustam722rx.workers.dev';
 const FIREBASE_PROXY = '/api';
 const PKK_API        = 'https://pkk.rosreestr.ru/api';
 const CORS_PROXIES   = ['https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='];
