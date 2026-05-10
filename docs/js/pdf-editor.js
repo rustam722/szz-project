@@ -34,6 +34,9 @@ const SNAP_DIST  = 10;    // пикселей для притяжения
 // ── Инсет-карты (лупа) ───────────────────────────
 const _insetMaps = {};    // id → L.map
 
+// ── Слои полигонов на pdf-карте ──────────────────
+let _pdfGeoLayers = [];   // GeoJSON-слои на pdfMap (чтобы перерисовывать при смене проекта)
+
 // ── Undo / Redo ───────────────────────────────────
 let _undoStack   = [];
 let _redoStack   = [];
@@ -68,6 +71,7 @@ function enterPdfMode() {
 
   // Инициализируем карту внутри pdf-canvas (если ещё не создана)
   if (!pdfMap) _initPdfMap();
+  else _refreshPdfMapLayers(); // При повторном открытии — обновить слои проекта
 
   // Восстанавливаем объекты из localStorage
   _loadState();
@@ -124,18 +128,47 @@ function _initPdfMap() {
   _pdfTile.addTo(pdfMap);
 
   // Копируем слои (полигоны)
+  _pdfGeoLayers = [];
   mapLayers.forEach(l => {
     if (l.layer && l.layer.toGeoJSON) {
       try {
         const geo   = l.layer.toGeoJSON();
         const style = l._psStyle || { color: l.color, fillColor: l.color, fillOpacity: l.type === 'szz' ? 0.1 : 0.15, weight: 2 };
-        L.geoJSON(geo, { style: () => style }).addTo(pdfMap);
+        const gl = L.geoJSON(geo, { style: () => style }).addTo(pdfMap);
+        _pdfGeoLayers.push(gl);
       } catch(e) {}
     }
   });
 
   // Масштаб
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(pdfMap);
+}
+
+// ── Обновить слои полигонов на pdf-карте (при смене проекта) ──
+function _refreshPdfMapLayers() {
+  if (!pdfMap) return;
+  // Удаляем старые GeoJSON-слои
+  _pdfGeoLayers.forEach(gl => { try { pdfMap.removeLayer(gl); } catch(e) {} });
+  _pdfGeoLayers = [];
+  // Добавляем текущие
+  mapLayers.forEach(l => {
+    if (l.layer && l.layer.toGeoJSON) {
+      try {
+        const geo   = l.layer.toGeoJSON();
+        const style = l._psStyle || { color: l.color, fillColor: l.color, fillOpacity: l.type === 'szz' ? 0.1 : 0.15, weight: 2 };
+        const gl = L.geoJSON(geo, { style: () => style }).addTo(pdfMap);
+        _pdfGeoLayers.push(gl);
+      } catch(e) {}
+    }
+  });
+  // Перецентрировать на активный слой если есть
+  const valid = mapLayers.filter(l => l.layer && l.layer.getBounds);
+  if (valid.length) {
+    let bounds = valid[0].layer.getBounds();
+    valid.slice(1).forEach(l => bounds.extend(l.layer.getBounds()));
+    try { pdfMap.fitBounds(bounds, { padding: [24, 24] }); } catch(e) {}
+  }
+  setTimeout(() => { if (pdfMap) pdfMap.invalidateSize(); }, 150);
 }
 
 // ═══════════════════════════════════════════════════
@@ -1730,10 +1763,16 @@ function _loadState() {
   const saved = Store.get('pdfObjects', []);
   pdfOrientation = Store.get('pdfOrientation', 'landscape');
   // Восстанавливаем объекты без изображений (base64 не сериализуем)
-  pdfObjects = saved.filter(o => o.data.content !== '[img]').map(o => ({
+  pdfObjects = saved.filter(o => o.type && o.data).map(o => ({
     ...o,
     data: { ...OBJ_DEFAULTS[o.type] || OBJ_DEFAULTS.rect, ...o.data }
   }));
+  // Чтобы новые объекты не конфликтовали по id
+  const maxCnt = pdfObjects.reduce((m, o) => {
+    const n = parseInt((o.id || '').replace('pobj_', '')) || 0;
+    return Math.max(m, n + 1);
+  }, pdfObjCnt);
+  pdfObjCnt = maxCnt;
 }
 
 // ── Хелперы для цветов ────────────────────────────

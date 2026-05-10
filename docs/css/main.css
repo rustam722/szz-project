@@ -554,3 +554,106 @@ textarea {
 .status-bar.ok   { color: var(--green); }
 .status-bar.err  { color: var(--red); }
 .status-bar.spin { color: var(--acc2); }
+
+/* ═══════════════════════════════════════════════
+   МОДАЛЬНОЕ ОКНО ПРОЕКТОВ
+═══════════════════════════════════════════════ */
+#projects-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 99000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal-bg {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  z-index: 0;
+  cursor: pointer;
+}
+.modal {
+  position: relative;
+  z-index: 1;
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  width: 480px;
+  max-width: 95vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+.modal-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--bd);
+  background: var(--bg3);
+  flex-shrink: 0;
+}
+.modal-hdr h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--tx);
+}
+.modal-close {
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--bd);
+  background: transparent;
+  color: var(--tx2);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.modal-close:hover { background: rgba(239,68,68,0.15); color: var(--red); border-color: var(--red); }
+.modal-body {
+  padding: 14px 18px;
+  overflow-y: auto;
+  flex: 1;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bd) transparent;
+}
+.modal-body::-webkit-scrollbar { width: 4px; }
+.modal-body::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 2px; }
+
+/* Карточки проектов */
+.project-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: var(--bg3);
+  transition: border-color .15s, background .15s;
+  cursor: default;
+}
+.project-card:hover { border-color: var(--acc2); background: #1a2d50; }
+.project-card-info { flex: 1; min-width: 0; }
+.project-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-card-meta {
+  font-size: 10px;
+  color: var(--tx2);
+  margin-top: 2px;
+}
+.project-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}

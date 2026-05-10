@@ -244,6 +244,12 @@
   window.newProject = () => {
     currentProjectId = null;
     clearAll();
+    // Сбрасываем PDF-объекты и состояние карты PDF
+    if (typeof pdfObjects !== 'undefined') {
+      pdfObjects = [];
+      Store.del('pdfObjects');
+      Store.del('pdfOrientation');
+    }
     document.getElementById('tb-project-name').textContent = 'Новый проект';
     closeProjects();
     setSt('Новый проект создан', 'ok');
@@ -309,8 +315,12 @@
     foundParcels.forEach(fp => addParcelLayer(fp));
     if (foundParcels.length) renderResults(inside, cross);
 
+    // Загружаем PDF-объекты и сохраняем их в Store,
+    // чтобы enterPdfMode() → _loadState() прочитал правильные данные
     pdfObjects = p.pdfObjects || [];
     pdfOrientation = p.pdfOrientation || 'landscape';
+    Store.set('pdfObjects', pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: '' } })));
+    Store.set('pdfOrientation', pdfOrientation);
 
     if (mapLayers.length) {
       const allBounds = mapLayers.filter(l => l.layer && l.layer.getBounds).map(l => l.layer.getBounds());
