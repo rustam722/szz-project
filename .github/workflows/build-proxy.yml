@@ -1,0 +1,35 @@
+name: Build Proxy App
+
+on:
+  workflow_dispatch:  # запуск вручную с GitHub
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pynspd shapely httpx
+
+      - name: Build .exe
+        run: |
+          pyinstaller proxy_app_win.py `
+            --name "СЗЗ Прокси" `
+            --windowed `
+            --onefile `
+            --noconfirm `
+            --hidden-import pynspd `
+            --hidden-import shapely `
+            --add-data "proxy_final.py;."
+
+      - name: Upload .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: СЗЗ-Прокси-Windows
+          path: dist/СЗЗ Прокси.exe
