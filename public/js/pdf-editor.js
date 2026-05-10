@@ -232,7 +232,7 @@ function _renderCalloutHtml(obj) {
       <polygon points="${p1} ${tx.toFixed(1)},${ty.toFixed(1)} ${p2}" fill="${d.bg}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" stroke-linejoin="round"/>
       <rect x="0" y="0" width="${w}" height="${h}" fill="${d.bg}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" rx="${r}"/>
     </svg>
-    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:6px 12px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};word-break:break-word;z-index:1">${d.content||'Выноска'}</div>
+    <div class="callout-text-inner" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:6px 12px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};word-break:break-word;z-index:1;pointer-events:none;user-select:none">${d.content||'Выноска'}</div>
   </div>`;
 }
 
@@ -382,6 +382,9 @@ function _finishPath(closed) {
 // ── Инициализация рисования пути в canvas ─────────
 function _initPathDrawing() {
   const canvas = document.getElementById('pdf-canvas');
+  // Защита от повторной привязки при каждом enterPdfMode()
+  if (canvas._pathDrawingBound) return;
+  canvas._pathDrawingBound = true;
   const PATH_TOOLS = ['path','bezier','polygon-shape','freehand','callout'];
 
   // Клик — добавить точку (только для не-фриханд)
@@ -428,8 +431,9 @@ function _initPathDrawing() {
     if (!PATH_TOOLS.includes(pdfTool) || pdfTool==='freehand' || pdfTool==='callout') return;
     if (!_pathDraft || _pathDraft.pts.length < 2) return;
     e.preventDefault();
-    // Убираем лишнюю точку от одиночного клика двойного
-    if (_pathDraft.pts.length > 2) _pathDraft.pts.pop();
+    e.stopPropagation();
+    // Двойной клик добавляет дублирующую точку через одиночный click — удаляем её
+    if (_pathDraft.pts.length >= 2) _pathDraft.pts.pop();
     _finishPath(pdfTool === 'polygon-shape');
   });
 
@@ -954,6 +958,8 @@ function _applyOrientation() {
 
 // ── Инструменты ───────────────────────────────────
 function setPdfTool(t) {
+  // Прерываем активное рисование пути при смене инструмента
+  if (_pathDraft) _clearPathGhost();
   pdfTool = t;
   document.querySelectorAll('.ps-tool[id^="pst-"]').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('pst-' + t);
@@ -1199,9 +1205,33 @@ function _attachObjEvents(el, obj) {
   // Двойной клик — редактировать текст
   el.addEventListener('dblclick', e => {
     if (obj.locked) return;
+    e.stopPropagation();
+
+    // Выноска — редактировать текст внутри callout-text-inner
+    if (obj.type === 'callout') {
+      const div = el.querySelector('.callout-text-inner');
+      if (!div) return;
+      div.style.pointerEvents = 'auto';
+      div.style.userSelect = 'text';
+      div.contentEditable = 'true';
+      div.focus();
+      const range = document.createRange();
+      range.selectNodeContents(div);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      div.onblur = () => {
+        div.contentEditable = 'false';
+        div.style.pointerEvents = 'none';
+        div.style.userSelect = 'none';
+        obj.data.content = div.textContent;
+        _saveState();
+      };
+      return;
+    }
+
+    // Обычный текст
     const span = el.querySelector('.ps-text-content');
     if (!span) return;
-    e.stopPropagation();
     span.style.pointerEvents = 'auto';
     span.contentEditable = 'true';
     span.focus();
@@ -1262,6 +1292,8 @@ function _onResizeStart(e, obj, handle) {
 // ── Draw tool (рисование на канвасе) ─────────────
 function _initCanvasDrawing() {
   const canvas = document.getElementById('pdf-canvas');
+  if (!canvas || canvas._canvasDrawBound) return;
+  canvas._canvasDrawBound = true;
 
   canvas.addEventListener('pointerdown', e => {
     if (pdfTool === 'select' || pdfTool === 'image') return;
@@ -1423,7 +1455,7 @@ function _renderProps() {
 
   const bgHex = _rgbaToHex(d.bg);
   const alpha  = _rgbaAlpha(d.bg);
-  const showText = ['text','legend','scale','north'].includes(d.type);
+  const showText = ['text','legend','scale','north','callout','rect','ellipse'].includes(obj.type);
 
   panel.innerHTML = `
     <div class="pp-title">⚙ Свойства: <span style="color:#60a5fa;text-transform:none">${obj.name}</span></div>
@@ -1547,8 +1579,9 @@ function applyPdfProp() {
 
   const sw = parseInt(document.getElementById('pp-sw')?.value) || 0;
   const sc = document.getElementById('pp-stroke')?.value || '#334155';
-  d.strokeW     = sw;
-  d.strokeColor = sw > 0 ? sc : 'transparent';
+  d.strokeW = sw;
+  // Для путей и кривых обводка всегда применяется (иначе ничего не видно)
+  d.strokeColor = (['path','bezier'].includes(obj.type) || sw > 0) ? sc : 'transparent';
   if (document.getElementById('pp-radius')) d.radius = parseInt(document.getElementById('pp-radius').value) || 0;
   if (document.getElementById('pp-shadow')) d.shadow = document.getElementById('pp-shadow').checked;
   if (document.getElementById('pp-rotation')) {

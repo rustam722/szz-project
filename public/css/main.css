@@ -30,8 +30,97 @@ html, body {
 /* ═══════════════════════════════════════════════
    LAYOUT
 ═══════════════════════════════════════════════ */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── TOPBAR ── */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 46px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--bd);
+  padding: 0 14px;
+  gap: 10px;
+  z-index: 1000;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+.topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: center;
+}
+.topbar-right {
+  min-width: 160px;
+}
+.tb-logo {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  background: var(--acc);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.tb-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--tx);
+  white-space: nowrap;
+}
+.tb-project-name {
+  font-size: 12px;
+  color: var(--tx2);
+  padding: 3px 10px;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  background: var(--bg3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.tb-btn {
+  padding: 5px 13px;
+  border-radius: 7px;
+  border: 1px solid var(--bd);
+  background: var(--bg3);
+  color: var(--tx);
+  font-size: 12px;
+  font-family: var(--ui);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tb-btn:hover { border-color: var(--acc2); color: var(--acc2); }
+.tb-btn.pri { background: var(--acc); border-color: var(--acc); color: #fff; font-weight: 600; }
+.tb-btn.pri:hover { background: #2563eb; }
+
+/* ── APP BODY (below topbar) ── */
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
 }
