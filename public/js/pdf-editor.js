@@ -49,6 +49,10 @@ let _gridEnabled = false;
 let _gridSnap    = false;
 const _gridSize  = 20;
 
+// ── Path drawing ──────────────────────────────────
+let _pathDraft    = null;   // { type, pts, freehand }
+let _pathGhostSvg = null;   // SVG-превью пути
+
 const CANVAS_W_L = 1123; // landscape
 const CANVAS_H_L = 794;
 const CANVAS_W_P = 794;  // portrait
@@ -76,6 +80,7 @@ function enterPdfMode() {
   _renderLayersList();
   _renderProps();
   _initCanvasZoomWheel();
+  _initPathDrawing();
 
   setSt('Режим редактора PDF — выбирай объекты и настраивай', 'ok');
 }
@@ -132,6 +137,316 @@ function _initPdfMap() {
   // Масштаб
   L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(pdfMap);
 }
+
+// ═══════════════════════════════════════════════════
+// ── ИНСТРУМЕНТЫ РИСОВАНИЯ ПУТИ ──────────────────
+// ═══════════════════════════════════════════════════
+
+// ── Вспомогательные функции пути ─────────────────
+function _updatePathBBox(obj) {
+  const pts = obj.data.pts || [];
+  if (!pts.length) return;
+  const pad = 24;
+  let minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y;
+  pts.forEach(p => { minX=Math.min(minX,p.x); maxX=Math.max(maxX,p.x); minY=Math.min(minY,p.y); maxY=Math.max(maxY,p.y); });
+  obj.data.x = minX - pad;
+  obj.data.y = minY - pad;
+  obj.data.w = Math.max(maxX - minX + pad*2, 10);
+  obj.data.h = Math.max(maxY - minY + pad*2, 10);
+}
+
+function _catmullToBezierLocal(pts, closed) {
+  if (pts.length < 2) return '';
+  const ext = closed
+    ? [pts[pts.length-1], ...pts, pts[0], pts[1]]
+    : [pts[0], ...pts, pts[pts.length-1]];
+  let d = `M ${ext[1].x} ${ext[1].y}`;
+  for (let i = 1; i < ext.length - 2; i++) {
+    const p0=ext[i-1], p1=ext[i], p2=ext[i+1], p3=ext[i+2];
+    const cp1x = p1.x + (p2.x-p0.x)/6, cp1y = p1.y + (p2.y-p0.y)/6;
+    const cp2x = p2.x - (p3.x-p1.x)/6, cp2y = p2.y - (p3.y-p1.y)/6;
+    d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x} ${p2.y}`;
+  }
+  if (closed) d += ' Z';
+  return d;
+}
+
+// Алгоритм Ramer-Douglas-Peucker для упрощения фриханда
+function _simplifyPath(pts, tolerance) {
+  if (pts.length <= 2) return pts;
+  function perpDist(pt, a, b) {
+    const dx=b.x-a.x, dy=b.y-a.y, len=Math.sqrt(dx*dx+dy*dy)||1;
+    return Math.abs(dx*(a.y-pt.y)-(a.x-pt.x)*dy)/len;
+  }
+  function rdp(points, s, e, eps) {
+    let maxD=0, idx=0;
+    for (let i=s+1;i<e;i++) { const d=perpDist(points[i],points[s],points[e]); if(d>maxD){maxD=d;idx=i;} }
+    if (maxD>eps) return [...rdp(points,s,idx,eps), ...rdp(points,idx,e,eps)];
+    return [points[e]];
+  }
+  return [pts[0], ...rdp(pts, 0, pts.length-1, tolerance)];
+}
+
+// ── Рендер SVG объектов ───────────────────────────
+function _renderPathSvg(obj) {
+  const d = obj.data;
+  const pts = d.pts || [];
+  if (pts.length < 2) return '<svg style="width:100%;height:100%"></svg>';
+  const lx = d.x, ly = d.y;
+  const localPts = pts.map(p => `${(p.x-lx).toFixed(1)},${(p.y-ly).toFixed(1)}`).join(' ');
+  const fill = d.closed && d.bg && d.bg !== 'transparent' ? d.bg : 'none';
+  const tag  = d.closed ? 'polygon' : 'polyline';
+  return `<svg width="${d.w}" height="${d.h}" viewBox="0 0 ${d.w} ${d.h}" style="overflow:visible;display:block;pointer-events:none">
+    <${tag} points="${localPts}" fill="${fill}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function _renderBezierSvg(obj) {
+  const d = obj.data;
+  const pts = d.pts || [];
+  if (pts.length < 2) return '<svg style="width:100%;height:100%"></svg>';
+  const lx = d.x, ly = d.y;
+  const localPts = pts.map(p => ({ x: p.x-lx, y: p.y-ly }));
+  const pathD = _catmullToBezierLocal(localPts, d.closed);
+  const fill  = d.closed && d.bg && d.bg !== 'transparent' ? d.bg : 'none';
+  return `<svg width="${d.w}" height="${d.h}" viewBox="0 0 ${d.w} ${d.h}" style="overflow:visible;display:block;pointer-events:none">
+    <path d="${pathD}" fill="${fill}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function _renderCalloutHtml(obj) {
+  const d = obj.data;
+  // tx/ty — положение хвоста в локальных координатах объекта
+  const tx = (d.tailX ?? 0) - d.x;
+  const ty = (d.tailY ?? 0) - d.y;
+  const w  = d.w, h = d.h;
+  // Точка крепления хвоста к боксу (ближайший край)
+  const ax = Math.max(10, Math.min(w-10, tx));
+  const ay = Math.max(10, Math.min(h-10, ty));
+  const nx = ty-ay, ny = -(tx-ax), len = Math.sqrt(nx*nx+ny*ny)||1, tw=10;
+  const p1 = `${(ax+nx/len*tw/2).toFixed(1)},${(ay+ny/len*tw/2).toFixed(1)}`;
+  const p2 = `${(ax-nx/len*tw/2).toFixed(1)},${(ay-ny/len*tw/2).toFixed(1)}`;
+  const r  = d.radius||8;
+  return `<div style="position:absolute;inset:0;pointer-events:none">
+    <svg style="position:absolute;inset:0;overflow:visible;width:${w}px;height:${h}px;pointer-events:none">
+      <polygon points="${p1} ${tx.toFixed(1)},${ty.toFixed(1)} ${p2}" fill="${d.bg}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" stroke-linejoin="round"/>
+      <rect x="0" y="0" width="${w}" height="${h}" fill="${d.bg}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" rx="${r}"/>
+    </svg>
+    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:6px 12px;font-size:${d.fontSize}px;color:${d.color};font-family:${d.fontFamily};font-weight:${d.fontWeight};word-break:break-word;z-index:1">${d.content||'Выноска'}</div>
+  </div>`;
+}
+
+// ── Хендлы точек пути ─────────────────────────────
+function _renderPathHandles(el, obj) {
+  const pts = obj.data.pts || [];
+  pts.forEach((pt, idx) => {
+    const h = document.createElement('div');
+    h.className = `ps-handle ps-path-pt${idx===0?' ps-path-first':''}`;
+    h.style.left = (pt.x - obj.data.x - 6) + 'px';
+    h.style.top  = (pt.y - obj.data.y - 6) + 'px';
+    el.appendChild(h);
+    h.addEventListener('pointerdown', e => _onPathPtDrag(e, obj, idx));
+  });
+  // Ручка поворота
+  const rEl = document.createElement('div');
+  rEl.className = 'ps-handle ps-rotate-handle';
+  el.appendChild(rEl);
+  rEl.addEventListener('pointerdown', e => _onRotateStart(e, obj));
+}
+
+function _onPathPtDrag(e, obj, idx) {
+  e.stopPropagation(); e.preventDefault();
+  _pushUndo();
+  const el = document.getElementById(obj.id);
+  el.setPointerCapture(e.pointerId);
+  const canvas = document.getElementById('pdf-canvas');
+
+  function onMove(ev) {
+    const rect = canvas.getBoundingClientRect();
+    let nx = (ev.clientX - rect.left) * (canvas.offsetWidth  / rect.width);
+    let ny = (ev.clientY - rect.top)  * (canvas.offsetHeight / rect.height);
+    if (_gridSnap) { nx = Math.round(nx/_gridSize)*_gridSize; ny = Math.round(ny/_gridSize)*_gridSize; }
+    obj.data.pts[idx] = { x: Math.round(nx), y: Math.round(ny) };
+    _updatePathBBox(obj);
+    el.style.left = obj.data.x+'px'; el.style.top = obj.data.y+'px';
+    el.style.width = obj.data.w+'px'; el.style.height = obj.data.h+'px';
+    _renderObjContent(el, obj); _updateHandles(el, obj);
+  }
+  function onUp() {
+    el.removeEventListener('pointermove', onMove);
+    el.removeEventListener('pointerup', onUp);
+    _saveState();
+  }
+  el.addEventListener('pointermove', onMove);
+  el.addEventListener('pointerup', onUp);
+}
+
+function _renderCalloutHandles(el, obj) {
+  // Хендл хвоста выноски
+  const h = document.createElement('div');
+  h.className = 'ps-handle ps-callout-tail';
+  h.style.left = ((obj.data.tailX||0) - obj.data.x - 8) + 'px';
+  h.style.top  = ((obj.data.tailY||0) - obj.data.y - 8) + 'px';
+  h.title = 'Переместить острие выноски';
+  el.appendChild(h);
+  h.addEventListener('pointerdown', e => _onCalloutTailDrag(e, obj));
+}
+
+function _onCalloutTailDrag(e, obj) {
+  e.stopPropagation(); e.preventDefault();
+  _pushUndo();
+  const el = document.getElementById(obj.id);
+  el.setPointerCapture(e.pointerId);
+  const canvas = document.getElementById('pdf-canvas');
+
+  function onMove(ev) {
+    const rect = canvas.getBoundingClientRect();
+    obj.data.tailX = Math.round((ev.clientX - rect.left) * (canvas.offsetWidth  / rect.width));
+    obj.data.tailY = Math.round((ev.clientY - rect.top)  * (canvas.offsetHeight / rect.height));
+    _renderObjContent(el, obj); _updateHandles(el, obj);
+  }
+  function onUp() {
+    el.removeEventListener('pointermove', onMove);
+    el.removeEventListener('pointerup', onUp);
+    _saveState();
+  }
+  el.addEventListener('pointermove', onMove);
+  el.addEventListener('pointerup', onUp);
+}
+
+// ── Ghost-превью пути ─────────────────────────────
+function _showPathGhost() {
+  const canvas = document.getElementById('pdf-canvas');
+  if (document.getElementById('path-ghost-svg')) return;
+  _pathGhostSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  _pathGhostSvg.id = 'path-ghost-svg';
+  _pathGhostSvg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5000;overflow:visible';
+  canvas.appendChild(_pathGhostSvg);
+}
+
+function _updatePathGhost(curX, curY) {
+  if (!_pathGhostSvg || !_pathDraft) return;
+  const pts   = [...(_pathDraft.pts||[]), { x:curX, y:curY }];
+  const color = ({ bezier:'#8b5cf6', 'polygon-shape':'#22c55e', callout:'#f59e0b' })[pdfTool] || '#3b82f6';
+
+  let lineEl = '';
+  if (pdfTool === 'bezier' && pts.length >= 2) {
+    lineEl = `<path d="${_catmullToBezierLocal(pts,false)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="6,3" stroke-linecap="round"/>`;
+  } else if (pdfTool === 'callout' && _pathDraft.pts.length === 1) {
+    const t = _pathDraft.pts[0];
+    lineEl = `<line x1="${t.x}" y1="${t.y}" x2="${curX}" y2="${curY}" stroke="${color}" stroke-width="2" stroke-dasharray="6,3"/>
+              <circle cx="${t.x}" cy="${t.y}" r="5" fill="${color}"/>`;
+  } else {
+    const pStr = pts.map(p=>`${p.x},${p.y}`).join(' ');
+    lineEl = `<polyline points="${pStr}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="6,3" stroke-linecap="round"/>`;
+  }
+
+  const dots = (_pathDraft.pts||[]).map((p,i) =>
+    `<circle cx="${p.x}" cy="${p.y}" r="${i===0?7:4}" fill="${i===0?'#22c55e':color}" stroke="white" stroke-width="2"/>`
+  ).join('');
+
+  _pathGhostSvg.innerHTML = lineEl + dots;
+}
+
+function _clearPathGhost() {
+  if (_pathGhostSvg) { _pathGhostSvg.remove(); _pathGhostSvg = null; }
+  _pathDraft = null;
+}
+
+function _finishPath(closed) {
+  if (!_pathDraft || (_pathDraft.pts||[]).length < 2) { _clearPathGhost(); return; }
+  let pts = _pathDraft.pts;
+  if (_pathDraft.freehand) pts = _simplifyPath(pts, 4);
+
+  const type = (_pathDraft.type === 'polygon-shape' || _pathDraft.type === 'freehand') ? 'path' : _pathDraft.type;
+  const isClosed = closed || _pathDraft.type === 'polygon-shape';
+  const color = ({ bezier:'#8b5cf6', path:'#3b82f6' })[type] || '#3b82f6';
+  const fill  = isClosed ? hexToRgba(color, 0.12) : 'transparent';
+
+  const pad=24;
+  let minX=pts[0].x, maxX=pts[0].x, minY=pts[0].y, maxY=pts[0].y;
+  pts.forEach(p=>{minX=Math.min(minX,p.x);maxX=Math.max(maxX,p.x);minY=Math.min(minY,p.y);maxY=Math.max(maxY,p.y);});
+
+  _clearPathGhost();
+  _pushUndo();
+  createPdfObj(type, {
+    pts, closed:isClosed,
+    x:minX-pad, y:minY-pad, w:Math.max(maxX-minX+pad*2,10), h:Math.max(maxY-minY+pad*2,10),
+    strokeColor:color, bg:fill,
+    content: '__' + type + '__',
+    name: isClosed ? 'Фигура' : type==='bezier' ? 'Кривая' : 'Путь',
+  });
+  setPdfTool('select');
+}
+
+// ── Инициализация рисования пути в canvas ─────────
+function _initPathDrawing() {
+  const canvas = document.getElementById('pdf-canvas');
+  const PATH_TOOLS = ['path','bezier','polygon-shape','freehand','callout'];
+
+  // Клик — добавить точку (только для не-фриханд)
+  canvas.addEventListener('click', e => {
+    if (!PATH_TOOLS.includes(pdfTool) || pdfTool==='freehand') return;
+    if (e.target.closest('.ps-obj') && !e.target.closest('#path-ghost-svg')) return;
+    const rect  = canvas.getBoundingClientRect();
+    const sx    = canvas.offsetWidth/rect.width, sy = canvas.offsetHeight/rect.height;
+    const x = Math.round((e.clientX-rect.left)*sx);
+    const y = Math.round((e.clientY-rect.top)*sy);
+
+    if (pdfTool === 'callout') {
+      if (!_pathDraft) {
+        _pathDraft = { type:'callout', pts:[{x,y}] };
+        _showPathGhost();
+      } else {
+        // Второй клик — создать выноску
+        const tailPt = _pathDraft.pts[0];
+        _clearPathGhost();
+        _pushUndo();
+        createPdfObj('callout', { tailX:tailPt.x, tailY:tailPt.y, x:x-80, y:y-28, w:160, h:56, name:'Выноска' });
+        setPdfTool('select');
+      }
+      return;
+    }
+
+    if (!_pathDraft) {
+      _pathDraft = { type:pdfTool, pts:[{x,y}] };
+      _showPathGhost();
+    } else {
+      // Кликнули рядом с первой точкой → замкнуть (polygon-shape)
+      const fp = _pathDraft.pts[0];
+      if (['polygon-shape'].includes(pdfTool) && _pathDraft.pts.length >= 3
+          && Math.hypot(x-fp.x, y-fp.y) < 18) {
+        _finishPath(true); return;
+      }
+      _pathDraft.pts.push({x,y});
+      _updatePathGhost(x, y);
+    }
+  });
+
+  // Двойной клик — завершить путь
+  canvas.addEventListener('dblclick', e => {
+    if (!PATH_TOOLS.includes(pdfTool) || pdfTool==='freehand' || pdfTool==='callout') return;
+    if (!_pathDraft || _pathDraft.pts.length < 2) return;
+    e.preventDefault();
+    // Убираем лишнюю точку от одиночного клика двойного
+    if (_pathDraft.pts.length > 2) _pathDraft.pts.pop();
+    _finishPath(pdfTool === 'polygon-shape');
+  });
+
+  // Движение мыши — ghost
+  canvas.addEventListener('pointermove', e => {
+    if (!_pathDraft || _pathDraft.freehand) return;
+    const rect = canvas.getBoundingClientRect();
+    _updatePathGhost(
+      (e.clientX-rect.left)*(canvas.offsetWidth/rect.width),
+      (e.clientY-rect.top) *(canvas.offsetHeight/rect.height)
+    );
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// ── ПОВОРОТ ОБЪЕКТА ──────────────────────────────
+// ═══════════════════════════════════════════════════
 
 // ── Поворот объекта ───────────────────────────────
 function _onRotateStart(e, obj) {
@@ -535,11 +850,17 @@ function _buildToolbar() {
     <button class="ps-tool" data-tip="Отменить (Ctrl+Z)" onclick="undoPdf()" style="font-size:13px">↩</button>
     <button class="ps-tool" data-tip="Повторить (Ctrl+Y)" onclick="redoPdf()" style="font-size:13px">↪</button>
     <div class="ps-tool-sep"></div>
-    <button class="ps-tool ${pdfTool==='text'   ?'active':''}" id="pst-text"    data-tip="Текст (T)"         onclick="setPdfTool('text')">T</button>
-    <button class="ps-tool ${pdfTool==='rect'   ?'active':''}" id="pst-rect"    data-tip="Прямоугольник (R)" onclick="setPdfTool('rect')">▭</button>
-    <button class="ps-tool ${pdfTool==='ellipse'?'active':''}" id="pst-ellipse" data-tip="Эллипс (E)"        onclick="setPdfTool('ellipse')">◯</button>
-    <button class="ps-tool ${pdfTool==='line'   ?'active':''}" id="pst-line"    data-tip="Линия (L)"         onclick="setPdfTool('line')">╱</button>
+    <button class="ps-tool ${pdfTool==='text'          ?'active':''}" id="pst-text"          data-tip="Текст (T)"                   onclick="setPdfTool('text')">T</button>
+    <button class="ps-tool ${pdfTool==='rect'          ?'active':''}" id="pst-rect"          data-tip="Прямоугольник (R)"            onclick="setPdfTool('rect')">▭</button>
+    <button class="ps-tool ${pdfTool==='ellipse'       ?'active':''}" id="pst-ellipse"       data-tip="Эллипс (E)"                   onclick="setPdfTool('ellipse')">◯</button>
+    <button class="ps-tool ${pdfTool==='line'          ?'active':''}" id="pst-line"          data-tip="Линия (L)"                    onclick="setPdfTool('line')">╱</button>
     <button class="ps-tool" id="pst-image" data-tip="Изображение (I)" onclick="document.getElementById('ps-image-upload').click()">🖼</button>
+    <div class="ps-tool-sep"></div>
+    <button class="ps-tool ${pdfTool==='path'          ?'active':''}" id="pst-path"          data-tip="Перо — прямые линии (P) | двойной клик = завершить"   onclick="setPdfTool('path')" style="font-size:16px">✒</button>
+    <button class="ps-tool ${pdfTool==='bezier'        ?'active':''}" id="pst-bezier"        data-tip="Перо Безье — плавные кривые (B) | двойной клик = завершить" onclick="setPdfTool('bezier')" style="font-size:15px">〰</button>
+    <button class="ps-tool ${pdfTool==='freehand'      ?'active':''}" id="pst-freehand"      data-tip="Карандаш — рисуй от руки (F)"  onclick="setPdfTool('freehand')" style="font-size:16px">✏</button>
+    <button class="ps-tool ${pdfTool==='polygon-shape' ?'active':''}" id="pst-polygon-shape" data-tip="Многоугольник — клик по вершинам | клик на первую = замкнуть" onclick="setPdfTool('polygon-shape')" style="font-size:14px">⬠</button>
+    <button class="ps-tool ${pdfTool==='callout'       ?'active':''}" id="pst-callout"       data-tip="Выноска — 1й клик = острие, 2й клик = текстбокс"      onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
     <div class="ps-tool-sep"></div>
     <button class="ps-tool" data-tip="Легенда"           onclick="addPdfLegend()">≡</button>
     <button class="ps-tool" data-tip="Масштаб"           onclick="addPdfScale()">📏</button>
@@ -653,10 +974,13 @@ const OBJ_DEFAULTS = {
   image:   { w:160, h:100, bg:'transparent',             color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'transparent', strokeW:0, content:'',           textShadow:false, imgSrc:'' },
   inset:   { w:340, h:230, bg:'#ffffff',                color:'#0f172a',     fontSize:11, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:4, shadow:true,  strokeColor:'#334155',     strokeW:2, content:'__inset__',  textShadow:false, insetZoom:0 },
   arrow:   { w:200, h:30,  bg:'transparent',            color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444',     strokeW:3, content:'__arrow__',  textShadow:false, arrowDir:'end', rotation:0 },
+  path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, rotation:0 },
+  bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent',            color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, rotation:0 },
+  callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a',     fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:true,  strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, rotation:0 },
 };
 
 function _typeName(type) {
-  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка' }[type] || type;
+  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка', path:'Путь', bezier:'Кривая', callout:'Выноска' }[type] || type;
 }
 
 function createPdfObj(type, overrides = {}) {
@@ -690,14 +1014,16 @@ function _renderObj(obj) {
   }
 
   const d = obj.data;
+  const _isSvgType = ['path','bezier'].includes(obj.type);
   el.style.cssText = `
     position:absolute;
     left:${d.x}px; top:${d.y}px;
     width:${d.w}px; height:${d.h}px;
-    background:${d.bg};
+    background:${_isSvgType ? 'transparent' : d.bg};
     border-radius:${d.radius}px;
-    border:${d.strokeW > 0 ? `${d.strokeW}px solid ${d.strokeColor}` : 'none'};
-    box-shadow:${d.shadow ? '0 4px 14px rgba(0,0,0,0.18)' : 'none'};
+    border:${_isSvgType ? 'none' : d.strokeW > 0 ? `${d.strokeW}px solid ${d.strokeColor}` : 'none'};
+    box-shadow:${d.shadow && !_isSvgType ? '0 4px 14px rgba(0,0,0,0.18)' : 'none'};
+    overflow:${_isSvgType ? 'visible' : 'hidden'};
     color:${d.color};
     font-size:${d.fontSize}px;
     font-family:${d.fontFamily};
@@ -734,6 +1060,9 @@ function _renderObjContent(el, obj) {
   if (d.content === '__north__')  { el.innerHTML = _northHtml(d);  return; }
   if (d.content === '__inset__')  { _initInsetMap(el, obj); if (_insetMaps[obj.id]) setTimeout(() => _insetMaps[obj.id].invalidateSize(), 80); return; }
   if (d.content === '__arrow__')  { el.innerHTML = _arrowHtml(obj); return; }
+  if (d.content === '__path__')   { el.innerHTML = _renderPathSvg(obj);   return; }
+  if (d.content === '__bezier__') { el.innerHTML = _renderBezierSvg(obj); return; }
+  if (obj.type  === 'callout')    { el.innerHTML = _renderCalloutHtml(obj); return; }
   if (d.type === 'image' && d.imgSrc) {
     el.innerHTML = `<img src="${d.imgSrc}" style="width:100%;height:100%;object-fit:contain;border-radius:${d.radius}px;pointer-events:none">`;
     return;
@@ -781,10 +1110,19 @@ function _northHtml(d) {
 const HANDLES = ['nw','n','ne','e','se','s','sw','w'];
 
 function _updateHandles(el, obj) {
-  // Удаляем старые
   el.querySelectorAll('.ps-handle').forEach(h => h.remove());
   if (obj.id !== pdfSelId || obj.locked) return;
 
+  // Путь/кривая — редактирование точек
+  if (['path','bezier'].includes(obj.type)) {
+    _renderPathHandles(el, obj); return;
+  }
+  // Выноска — хендл хвоста + стандартные
+  if (obj.type === 'callout') {
+    _renderCalloutHandles(el, obj);
+  }
+
+  // Стандартные resize-хендлы
   HANDLES.forEach(h => {
     const hEl = document.createElement('div');
     hEl.className = 'ps-handle';
@@ -816,11 +1154,12 @@ function _attachObjEvents(el, obj) {
     // Drag
     _pushUndo();
     const startX = e.clientX, startY = e.clientY;
-    const ox = obj.data.x,    oy = obj.data.y;
+    const ox = obj.data.x, oy = obj.data.y;
+    const origPts  = obj.data.pts  ? obj.data.pts.map(p => ({...p})) : null;
+    const origTailX = obj.data.tailX, origTailY = obj.data.tailY;
     el.setPointerCapture(e.pointerId);
 
     function onMove(ev) {
-      // Учитываем scale канваса
       const canvas = document.getElementById('pdf-canvas');
       const rect   = canvas.getBoundingClientRect();
       const scaleX = canvas.offsetWidth  / rect.width;
@@ -828,12 +1167,16 @@ function _attachObjEvents(el, obj) {
       const nx = Math.round(ox + (ev.clientX - startX) * scaleX);
       const ny = Math.round(oy + (ev.clientY - startY) * scaleY);
       const snapped = _snapObject(obj, nx, ny);
+      const dx = snapped.x - ox, dy = snapped.y - oy;
       obj.data.x = snapped.x;
       obj.data.y = snapped.y;
+      // Двигаем точки пути
+      if (origPts)           obj.data.pts  = origPts.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      if (origTailX !== undefined) { obj.data.tailX = origTailX + dx; obj.data.tailY = origTailY + dy; }
       el.style.left = obj.data.x + 'px';
       el.style.top  = obj.data.y + 'px';
+      if (['path','bezier','callout'].includes(obj.type)) { _renderObjContent(el, obj); _updateHandles(el, obj); }
       _syncPropsXY();
-      // Инвалидируем inset если есть
       if (_insetMaps[obj.id]) _insetMaps[obj.id].invalidateSize();
     }
     function onUp() {
@@ -922,9 +1265,31 @@ function _initCanvasDrawing() {
 
   canvas.addEventListener('pointerdown', e => {
     if (pdfTool === 'select' || pdfTool === 'image') return;
-    if (pdfMapDrag) return; // в режиме перемещения — отдаём управление Leaflet
-    if (e.target.closest('#pdf-map')) return; // клик по карте — не рисуем
+    if (pdfMapDrag) return;
+    if (e.target.closest('#pdf-map')) return;
     if (e.target.classList.contains('ps-obj') || e.target.closest('.ps-obj')) return;
+    // Path-инструменты работают через click/dblclick, кроме freehand
+    if (['path','bezier','polygon-shape','callout'].includes(pdfTool)) return;
+    // Freehand — начинаем запись
+    if (pdfTool === 'freehand') {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.offsetWidth/rect.width, sy = canvas.offsetHeight/rect.height;
+      const x = Math.round((e.clientX-rect.left)*sx);
+      const y = Math.round((e.clientY-rect.top)*sy);
+      _pathDraft = { type:'freehand', pts:[{x,y}], freehand:true };
+      _showPathGhost();
+      canvas.setPointerCapture(e.pointerId);
+      const mmFree = ev => {
+        const rr = canvas.getBoundingClientRect();
+        _pathDraft.pts.push({ x:Math.round((ev.clientX-rr.left)*(canvas.offsetWidth/rr.width)), y:Math.round((ev.clientY-rr.top)*(canvas.offsetHeight/rr.height)) });
+        _updatePathGhost(_pathDraft.pts[_pathDraft.pts.length-1].x, _pathDraft.pts[_pathDraft.pts.length-1].y);
+      };
+      const muFree = () => { canvas.removeEventListener('pointermove',mmFree); canvas.removeEventListener('pointerup',muFree); _finishPath(false); };
+      canvas.addEventListener('pointermove', mmFree);
+      canvas.addEventListener('pointerup', muFree);
+      return;
+    }
     e.preventDefault();
 
     // Позиция внутри pdf-canvas с учётом scale
@@ -1232,7 +1597,7 @@ function _renderLayersList() {
       ${pdfObjects.length === 0
         ? '<div class="pl-empty">Нет объектов.<br>Используй инструменты выше.</div>'
         : pdfObjects.map(obj => {
-          const icon = { text:'T', rect:'▭', ellipse:'◯', line:'╱', legend:'≡', scale:'📏', north:'🧭', image:'🖼', inset:'🔍', arrow:'➡' }[obj.type] || '?';
+          const icon = { text:'T', rect:'▭', ellipse:'◯', line:'╱', legend:'≡', scale:'📏', north:'🧭', image:'🖼', inset:'🔍', arrow:'➡', path:'✒', bezier:'〰', callout:'💬' }[obj.type] || '?';
           return `<div class="pl-item ${obj.id===pdfSelId?'selected':''} ${obj.locked?'locked':''}"
                        onclick="selectPdfObj('${obj.id}')">
             <span class="pl-vis" onclick="togglePdfObjVis(event,'${obj.id}')">${obj.visible?'👁':'🙈'}</span>
@@ -1362,7 +1727,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'r' || e.key === 'R') setPdfTool('rect');
   if (e.key === 'e' || e.key === 'E') setPdfTool('ellipse');
   if (e.key === 'l' || e.key === 'L') setPdfTool('line');
-  if (e.key === 'Escape') selectPdfObj(null);
+  if (e.key === 'p' || e.key === 'P') setPdfTool('path');
+  if (e.key === 'b' || e.key === 'B') setPdfTool('bezier');
+  if (e.key === 'f' || e.key === 'F') setPdfTool('freehand');
+  if (e.key === 'Escape') { _clearPathGhost(); selectPdfObj(null); setPdfTool('select'); }
   if ((e.ctrlKey||e.metaKey) && e.key==='d') { e.preventDefault(); duplicatePdfObj(); }
   if ((e.ctrlKey||e.metaKey) && e.key==='z') { e.preventDefault(); undoPdf(); }
   if ((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.shiftKey && e.key==='Z'))) { e.preventDefault(); redoPdf(); }
