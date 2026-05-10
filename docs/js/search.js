@@ -1,32 +1,103 @@
 // ═══════════════════════════════════════════════
-// SEARCH.JS — поиск участков через Firebase Cloud Function
+// SEARCH.JS — поиск участков через ПКК Росреестр
 // ═══════════════════════════════════════════════
 
 'use strict';
 
-// Прокси — Firebase Cloud Function (вместо локального proxy.py)
-// При деплое на Firebase Hosting запросы /api/** идут на Cloud Function
-const PROXY = '/api';
+// ── Прокси (приоритет) ────────────────────────────
+// 1. LOCAL    — локальный proxy.py на 127.0.0.1:8765 (python3 proxy.py)
+// 2. CF       — Cloudflare Worker (бесплатно, всегда онлайн)
+// 3. FIREBASE — Firebase Cloud Function /api (firebase deploy, Blaze plan)
+// 4. CORS     — публичные CORS-прокси (резерв)
+
+const LOCAL_PROXY    = 'http://127.0.0.1:8765';
+// ▼ После деплоя Cloudflare Worker вставь сюда свой URL:
+const CF_WORKER      = 'https://pkk-proxy.YOUR_SUBDOMAIN.workers.dev';
+const FIREBASE_PROXY = '/api';
+const PKK_API        = 'https://pkk.rosreestr.ru/api';
+const CORS_PROXIES   = ['https://corsproxy.io/?', 'https://api.allorigins.win/raw?url='];
+
+// 'local' | 'cf' | 'firebase' | 'cors:<url>' | null
+let _proxyMode = null;
+
+async function _pingOk(url, timeout) {
+  try {
+    const r = await fetchSafe(url, timeout);
+    if (!r.ok) return false;
+    const d = await r.json();
+    return !!(d && d.ok);
+  } catch(e) { return false; }
+}
+
+async function _detectProxy() {
+  // 1. Локальный proxy.py
+  if (await _pingOk(`${LOCAL_PROXY}/ping`, 2000)) { _proxyMode = 'local'; return true; }
+
+  // 2. Cloudflare Worker (если настроен — не содержит YOUR_SUBDOMAIN)
+  if (!CF_WORKER.includes('YOUR_SUBDOMAIN')) {
+    if (await _pingOk(`${CF_WORKER}/ping`, 5000)) { _proxyMode = 'cf'; return true; }
+  }
+
+  // 3. Firebase Cloud Function
+  if (await _pingOk(`${FIREBASE_PROXY}/ping`, 4000)) { _proxyMode = 'firebase'; return true; }
+
+  // 4. Публичный CORS-прокси
+  const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
+  for (const p of CORS_PROXIES) {
+    try {
+      const r = await fetchSafe(p + encodeURIComponent(testUrl), 7000);
+      if (!r.ok) continue;
+      let d; try { d = await r.json(); } catch(e) { continue; }
+      if (d && Array.isArray(d.features)) { _proxyMode = 'cors:' + p; return true; }
+    } catch(e) {}
+  }
+
+  _proxyMode = null;
+  return false;
+}
 
 async function checkProxy() {
   const dot   = document.getElementById('proxy-dot');
   const label = document.getElementById('proxy-label');
-  try {
-    const r = await fetchSafe(`${PROXY}/ping`, 5000);
-    if (r.ok) {
-      dot.className = 'proxy-dot ok';
-      label.textContent = 'Сервер подключён ✓';
-    } else throw new Error();
-  } catch {
+  dot.className = 'proxy-dot';
+  label.textContent = 'Проверяю…';
+  const ok = await _detectProxy();
+  if (ok) {
+    dot.className = 'proxy-dot ok';
+    const labels = {
+      local:    'Локальный прокси ✓',
+      cf:       'Cloudflare Worker ✓',
+      firebase: 'Сервер подключён ✓',
+    };
+    label.textContent = labels[_proxyMode] || 'ПКК доступен (резерв) ✓';
+  } else {
     dot.className = 'proxy-dot err';
     label.textContent = 'Сервер недоступен';
   }
 }
 
-async function fetchTile(minLat, maxLat, minLon, maxLon) {
-  const url = `${PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
+async function _fetchPkk(baseUrl, minLat, maxLat, minLon, maxLon) {
+  const url = `${baseUrl}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
   const r   = await fetchSafe(url, 30000);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  if (!r.ok) { _proxyMode = null; throw new Error(`HTTP ${r.status}`); }
+  const data = await r.json();
+  return data.features || [];
+}
+
+async function fetchTile(minLat, maxLat, minLon, maxLon) {
+  if (!_proxyMode) {
+    if (!await _detectProxy()) throw new Error('Сервер недоступен');
+  }
+
+  if (_proxyMode === 'local')    return _fetchPkk(LOCAL_PROXY, minLat, maxLat, minLon, maxLon);
+  if (_proxyMode === 'cf')       return _fetchPkk(CF_WORKER,   minLat, maxLat, minLon, maxLon);
+  if (_proxyMode === 'firebase') return _fetchPkk(FIREBASE_PROXY, minLat, maxLat, minLon, maxLon);
+
+  // CORS-прокси (прямой запрос к ПКК)
+  const corsProxy = _proxyMode.replace('cors:', '');
+  const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
+  const r   = await fetchSafe(corsProxy + encodeURIComponent(pkk), 30000);
+  if (!r.ok) { _proxyMode = null; throw new Error(`CORS HTTP ${r.status}`); }
   const data = await r.json();
   return data.features || [];
 }
@@ -45,12 +116,12 @@ async function searchParcels() {
   document.getElementById('btn-export-word').disabled = true;
   document.getElementById('res-cnt').textContent = '0';
 
-  try {
-    const ping = await fetchSafe(`${PROXY}/ping`, 5000);
-    if (!ping.ok) throw new Error();
-  } catch {
-    setSt('Сервер недоступен — попробуй позже', 'err');
-    btn.disabled = false; return;
+  if (!_proxyMode) {
+    const ok = await _detectProxy();
+    if (!ok) {
+      setSt('Сервер недоступен — попробуй позже', 'err');
+      btn.disabled = false; return;
+    }
   }
 
   let szzTurf;

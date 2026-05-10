@@ -77,6 +77,15 @@ function initMap() {
   // Leaflet scale
   L.control.scale({ imperial: false }).addTo(map);
 
+  // Координаты курсора в правом нижнем углу
+  const coordsDiv = document.createElement('div');
+  coordsDiv.id = 'map-coords';
+  document.getElementById('map-wrapper').appendChild(coordsDiv);
+  map.on('mousemove', e => {
+    coordsDiv.textContent = `${e.latlng.lat.toFixed(6)}°  ${e.latlng.lng.toFixed(6)}°`;
+  });
+  map.on('mouseout', () => { coordsDiv.textContent = ''; });
+
   initZoomRect();
 }
 
