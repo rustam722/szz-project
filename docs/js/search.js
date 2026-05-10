@@ -8,7 +8,7 @@
 // Локальный proxy.py на 127.0.0.1:8765
 // Запуск: двойной клик на «Запустить прокси.command»
 
-const LOCAL_PROXY = 'http://127.0.0.1:8765';
+const LOCAL_PROXY = 'http://127.0.0.1:8767';
 
 // 'local' | null
 let _proxyMode = null;

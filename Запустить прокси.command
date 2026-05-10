@@ -1,8 +1,10 @@
-#!/bin/bash
+#!/bin/zsh
 # Двойной клик → запускает прокси + локальный сайт
 # Открой в браузере: http://localhost:8080
 
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROXY_DIR="/Users/rustam/Downloads/сзз выгрузка"
+VENV="$PROXY_DIR/.venv/bin/activate"
 
 clear
 echo "================================================"
@@ -10,24 +12,32 @@ echo "  СЗЗ Инструмент — запускаем..."
 echo "================================================"
 echo ""
 
-if ! command -v python3 &>/dev/null; then
-  echo "  ОШИБКА: python3 не найден."
-  echo "  Скачай с https://python.org"
+# Проверяем venv
+if [[ ! -f "$VENV" ]]; then
+  echo "  ОШИБКА: .venv не найден в папке 'сзз выгрузка'"
+  echo "  Убедись что папка 'сзз выгрузка' лежит в Downloads"
   echo ""
-  read -p "  Нажми Enter для закрытия..."
+  read "?  Нажми Enter для закрытия..."
   exit 1
 fi
 
-echo "  Python: $(python3 --version)"
-echo ""
+# Останавливаем старый прокси если был
+lsof -ti tcp:8767 | xargs kill -9 2>/dev/null || true
+sleep 0.5
 
-# Запускаем прокси в фоне
-python3 proxy.py &
+# Запускаем прокси с теми же настройками что работают
+source "$VENV"
+env PORT=8767 \
+    USE_PYNSPD=1 \
+    PYNSPD_FALLBACK_UPSTREAM=0 \
+    NSPD_SSL_VERIFY=0 \
+    PYNSPD_SRC_PATH="/Users/rustam/Downloads/pynspd-main/src" \
+    python "$PROXY_DIR/proxy_final.py" &
 PROXY_PID=$!
-echo "  [✓] Прокси запущен (PID $PROXY_PID)"
+echo "  [✓] Прокси запущен на порту 8767 (PID $PROXY_PID)"
 
-# Запускаем локальный HTTP-сервер для сайта
-python3 -m http.server 8080 --directory public &
+# Запускаем HTTP-сервер для сайта
+python3 -m http.server 8080 --directory "$SCRIPT_DIR/public" &
 SERVER_PID=$!
 echo "  [✓] Сайт запущен"
 echo ""
@@ -37,13 +47,12 @@ echo "  http://localhost:8080"
 echo "================================================"
 echo ""
 
-# Открываем браузер автоматически
+# Открываем браузер
 sleep 1
-open "http://localhost:8080" 2>/dev/null || true
+open "http://localhost:8080"
 
-echo "  Нажми Ctrl+C или закрой окно чтобы остановить."
+echo "  Закрой это окно чтобы остановить."
 echo ""
 
-# Ждём и останавливаем оба процесса при выходе
-trap "kill $PROXY_PID $SERVER_PID 2>/dev/null; echo ''; echo '  Остановлено.'" EXIT
+trap "kill $PROXY_PID $SERVER_PID 2>/dev/null; echo 'Остановлено.'" EXIT
 wait $PROXY_PID
