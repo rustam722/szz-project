@@ -194,7 +194,19 @@ function generateSzz() {
 function addMapLayer(type, name, poly, leafletLayer, parentId = null) {
   const id = Date.now();
   const colors = { parcel: '#f59e0b', szz: '#c084fc' };
-  const layer  = { id, type, name, poly, layer: leafletLayer, visible: true, parentId, color: colors[type] || '#3b82f6', _psStyle: null };
+  const defColor = colors[type] || '#3b82f6';
+  // Захватываем реальный стиль из только что созданного слоя Leaflet
+  const lo = leafletLayer.options || {};
+  const _psStyle = {
+    fillColor:   lo.fillColor   ?? defColor,
+    color:       lo.color       ?? defColor,
+    fillOpacity: lo.fillOpacity ?? (type === 'szz' ? 0.10 : 0.15),
+    opacity:     lo.opacity     ?? 1,
+    weight:      lo.weight      ?? 2,
+    dashArray:   lo.dashArray   ?? null,
+  };
+  const layer = { id, type, name, poly, layer: leafletLayer, visible: true, parentId,
+                  color: lo.color ?? defColor, _psStyle };
   mapLayers.unshift(layer);
   activeLayerId = id;
   renderLayers();
@@ -217,7 +229,8 @@ function getStyleCfg() {
 }
 
 function dashByType(t) {
-  return t === 'dashed' ? '8,6' : t === 'dotted' ? '2,8' : null;
+  // Значения должны совпадать с option value в lp-dash select
+  return t === 'dashed' ? '8,5' : t === 'dotted' ? '2,6' : null;
 }
 
 function renderLayers() {

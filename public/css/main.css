@@ -177,6 +177,30 @@ html, body {
   flex-shrink: 0;
 }
 
+/* ── РАЗДЕЛИТЕЛЬ ГЛАВНОЙ СТРАНИЦЫ ── */
+#main-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  background: var(--bd);
+  cursor: col-resize;
+  position: relative;
+  transition: background .15s;
+  z-index: 10;
+}
+#main-resize-handle:hover,
+#main-resize-handle.dragging { background: var(--acc2); }
+#main-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 1px;
+  height: 40px;
+  background: rgba(148,163,184,.25);
+  border-radius: 1px;
+}
+
 /* ── MAP WRAP ── */
 .map-wrap {
   flex: 1;
