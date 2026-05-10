@@ -1,31 +1,59 @@
 // ═══════════════════════════════════════════════
-// SEARCH.JS — поиск участков через Firebase Cloud Function
+// SEARCH.JS — поиск участков через ПКК Росреестр
 // ═══════════════════════════════════════════════
 
 'use strict';
 
-// Прокси — Firebase Cloud Function (вместо локального proxy.py)
-// При деплое на Firebase Hosting запросы /api/** идут на Cloud Function
-const PROXY = '/api';
+// Прямой доступ к ПКК через публичные CORS-прокси (GitHub Pages совместимо)
+const PKK_API = 'https://pkk5.rosreestr.ru/api';
+const CORS_PROXIES = [
+  'https://corsproxy.io/?',
+  'https://api.allorigins.win/raw?url=',
+  'https://proxy.cors.sh/',
+];
+
+let _activeProxy = null;
+
+async function _findWorkingProxy() {
+  const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
+  for (const proxy of CORS_PROXIES) {
+    try {
+      const r = await fetchSafe(proxy + encodeURIComponent(testUrl), 8000);
+      if (!r.ok) continue;
+      let d;
+      try { d = await r.json(); } catch(e) { continue; }
+      if (d && Array.isArray(d.features)) {
+        _activeProxy = proxy;
+        return true;
+      }
+    } catch(e) {}
+  }
+  _activeProxy = null;
+  return false;
+}
 
 async function checkProxy() {
   const dot   = document.getElementById('proxy-dot');
   const label = document.getElementById('proxy-label');
-  try {
-    const r = await fetchSafe(`${PROXY}/ping`, 5000);
-    if (r.ok) {
-      dot.className = 'proxy-dot ok';
-      label.textContent = 'Сервер подключён ✓';
-    } else throw new Error();
-  } catch {
+  dot.className = 'proxy-dot';
+  label.textContent = 'Проверяю…';
+  const ok = await _findWorkingProxy();
+  if (ok) {
+    dot.className = 'proxy-dot ok';
+    label.textContent = 'ПКК доступен ✓';
+  } else {
     dot.className = 'proxy-dot err';
     label.textContent = 'Сервер недоступен';
   }
 }
 
 async function fetchTile(minLat, maxLat, minLon, maxLon) {
-  const url = `${PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
-  const r   = await fetchSafe(url, 30000);
+  if (!_activeProxy) {
+    const ok = await _findWorkingProxy();
+    if (!ok) throw new Error('ПКК недоступен через CORS-прокси');
+  }
+  const pkk = `${PKK_API}/features/1?text=&tolerance=4&bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400&srs=4326`;
+  const r   = await fetchSafe(_activeProxy + encodeURIComponent(pkk), 30000);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const data = await r.json();
   return data.features || [];
@@ -45,12 +73,12 @@ async function searchParcels() {
   document.getElementById('btn-export-word').disabled = true;
   document.getElementById('res-cnt').textContent = '0';
 
-  try {
-    const ping = await fetchSafe(`${PROXY}/ping`, 5000);
-    if (!ping.ok) throw new Error();
-  } catch {
-    setSt('Сервер недоступен — попробуй позже', 'err');
-    btn.disabled = false; return;
+  if (!_activeProxy) {
+    const ok = await _findWorkingProxy();
+    if (!ok) {
+      setSt('ПКК недоступен — попробуй позже', 'err');
+      btn.disabled = false; return;
+    }
   }
 
   let szzTurf;
