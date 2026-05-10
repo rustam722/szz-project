@@ -30,16 +30,16 @@ async function _pingOk(url, timeout) {
 }
 
 async function _detectProxy() {
-  // 1. Локальный proxy.py
-  if (await _pingOk(`${LOCAL_PROXY}/ping`, 2000)) { _proxyMode = 'local'; return true; }
-
-  // 2. Cloudflare Worker (если настроен — не содержит YOUR_SUBDOMAIN)
+  // 1. Cloudflare Worker (приоритет — всегда HTTPS, работает для всех)
   if (!CF_WORKER.includes('YOUR_SUBDOMAIN')) {
     if (await _pingOk(`${CF_WORKER}/ping`, 5000)) { _proxyMode = 'cf'; return true; }
   }
 
-  // 3. Firebase Cloud Function
+  // 2. Firebase Cloud Function
   if (await _pingOk(`${FIREBASE_PROXY}/ping`, 4000)) { _proxyMode = 'firebase'; return true; }
+
+  // 3. Локальный proxy.py (резерв для локальной разработки)
+  if (await _pingOk(`${LOCAL_PROXY}/ping`, 2000)) { _proxyMode = 'local'; return true; }
 
   // 4. Публичный CORS-прокси
   const testUrl = `${PKK_API}/features/1?text=&bbox=37.6,55.7,37.7,55.8&limit=1&srs=4326`;
