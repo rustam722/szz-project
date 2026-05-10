@@ -13,3 +13,6 @@ function initApp() {
     }
   }, 200));
 }
+
+// Запускаем сразу без авторизации
+document.addEventListener('DOMContentLoaded', () => initApp());
