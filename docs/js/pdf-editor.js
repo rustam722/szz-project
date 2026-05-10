@@ -1044,20 +1044,12 @@ function _buildToolbar() {
         <input type="checkbox" id="pdf-no-fill-zu"  onchange="toggleFills()"> Убрать заливку ЗУ
       </label>
     </div>
-    <div class="ps-tool-sep" style="flex-basis:100%;height:0;margin:4px 0 2px"></div>
-    <div style="width:100%;font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:.6px;padding:0 2px 3px">🗺 Настройка карты</div>
-    <button class="pdf-map-ctrl ${pdfMapSat?'active':''}" id="pdf-sat-btn"
-            onclick="togglePdfMapSat()" title="Переключить спутник / схему">
-      ${pdfMapSat ? '🗺 Схема' : '🛰 Спутник'}
-    </button>
-    <button class="pdf-map-ctrl ${pdfMapDrag?'active':''}" id="pdf-drag-btn"
-            onclick="togglePdfMapDrag()" title="Двигать и масштабировать карту внутри PDF">
-      ${pdfMapDrag ? '🔒 Зафикс.' : '✋ Двигать'}
-    </button>
-    <button class="pdf-map-ctrl" onclick="fitPdfMapToLayer()" title="Авто-позиционирование на активном участке">
-      🎯 На участок
-    </button>
-  `;
+  `; // Кнопки 🛰/✋/🎯 теперь в #pdf-map-bar (постоянная полоса над тулбаром)
+  // Синхронизируем их состояние
+  const sb = document.getElementById('pdf-sat-btn');
+  if (sb) { sb.textContent = pdfMapSat ? '🗺 Схема' : '🛰 Спутник'; sb.classList.toggle('active', pdfMapSat); }
+  const db = document.getElementById('pdf-drag-btn');
+  if (db) { db.textContent = pdfMapDrag ? '🔒 Зафикс.' : '✋ Двигать'; db.classList.toggle('active', pdfMapDrag); }
 }
 
 function _buildActions() {

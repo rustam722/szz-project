@@ -18,6 +18,12 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Leaflet — стрелка вместо руки; grabbing только при реальном перетаскивании */
+.leaflet-container,
+.leaflet-grab { cursor: default !important; }
+.leaflet-dragging .leaflet-container,
+.leaflet-dragging .leaflet-grab { cursor: grabbing !important; }
+
 html, body {
   height: 100%;
   background: var(--bg);

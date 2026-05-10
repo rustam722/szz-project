@@ -46,6 +46,12 @@
   z-index: 0;
 }
 
+/* Стрелка вместо руки в Leaflet (и в pdf-map, и в инсетах) */
+#pdf-editor .leaflet-container,
+#pdf-editor .leaflet-grab { cursor: default !important; }
+#pdf-editor .leaflet-dragging .leaflet-container,
+#pdf-editor .leaflet-dragging .leaflet-grab { cursor: grabbing !important; }
+
 /* ── РАЗДЕЛИТЕЛЬ (ресайзер) ── */
 #pdf-resize-handle {
   width: 5px;
@@ -81,6 +87,31 @@
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ── ПОЛОСА УПРАВЛЕНИЯ КАРТОЙ PDF ── */
+#pdf-map-bar {
+  display: flex;
+  gap: 3px;
+  padding: 5px 8px;
+  background: #060a10;
+  border-bottom: 1px solid #1f2937;
+  flex-shrink: 0;
+}
+.pmb-btn {
+  flex: 1;
+  padding: 5px 4px;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+  background: #161b27;
+  color: #94a3b8;
+  font-size: 10px;
+  font-family: var(--ui);
+  cursor: pointer;
+  transition: all .12s;
+  white-space: nowrap;
+}
+.pmb-btn:hover { border-color: #3b82f6; color: #e2e8f0; background: #1a2d50; }
+.pmb-btn.active { background: #1a3a20; border-color: #22c55e; color: #4ade80; }
 
 /* ── ШАПКА САЙДБАРА (всегда видна) ── */
 #pdf-sidebar-header {

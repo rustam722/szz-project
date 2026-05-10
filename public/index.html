@@ -187,6 +187,12 @@
         <button class="pdf-back-btn" style="border-color:#166534;color:#4ade80;background:#052e16" onclick="exportPng()" title="Сохранить PNG">🖼 PNG</button>
       </div>
     </div>
+    <!-- Постоянная полоса управления картой PDF -->
+    <div id="pdf-map-bar">
+      <button class="pmb-btn" id="pdf-sat-btn" onclick="togglePdfMapSat()" title="Спутник / Схема">🛰 Спутник</button>
+      <button class="pmb-btn" id="pdf-drag-btn" onclick="togglePdfMapDrag()" title="Двигать карту">✋ Двигать</button>
+      <button class="pmb-btn" onclick="fitPdfMapToLayer()" title="Центровать на участке">🎯 На участок</button>
+    </div>
     <div id="pdf-toolbar"></div>
     <div id="pdf-props-panel"></div>
     <div id="pdf-layers-panel"></div>
