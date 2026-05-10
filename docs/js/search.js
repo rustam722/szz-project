@@ -43,8 +43,12 @@ async function fetchTile(minLat, maxLat, minLon, maxLon) {
   if (!_proxyMode) {
     if (!await _detectProxy()) throw new Error('Прокси не запущен — запусти proxy.py');
   }
-  const url = `${LOCAL_PROXY}/pkk?bbox=${minLon},${minLat},${maxLon},${maxLat}&limit=400`;
-  const r   = await fetchSafe(url, 30000);
+  const sq = JSON.stringify({
+    type: 'Polygon',
+    coordinates: [[[minLon,minLat],[maxLon,minLat],[maxLon,maxLat],[minLon,maxLat],[minLon,minLat]]]
+  });
+  const params = new URLSearchParams({ sq, limit: 400, tolerance: 2, resultType: 2 });
+  const r = await fetchSafe(`${LOCAL_PROXY}/pkk?${params}`, 30000);
   if (!r.ok) { _proxyMode = null; throw new Error(`HTTP ${r.status}`); }
   const data = await r.json();
   return data.features || [];
