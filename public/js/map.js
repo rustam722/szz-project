@@ -76,6 +76,7 @@ function initMap() {
 
   // Leaflet scale
   L.control.scale({ imperial: false }).addTo(map);
+  _initMapKeyboard();
 
   // Координаты курсора в правом нижнем углу
   const coordsDiv = document.createElement('div');
@@ -295,7 +296,9 @@ function selectLayer(id) {
   activeLayerId = id;
   renderLayers();
   updateButtons();
-  showLayerProps(mapLayers.find(l => l.id === id) || null);
+  const l = mapLayers.find(l => l.id === id) || null;
+  showLayerProps(l);
+  _updatePolyOpsPanel(l);
 }
 
 function showLayerProps(l) {
@@ -572,6 +575,108 @@ function addParcelLayer(p) {
     radius: 6, color, fillColor: color, fillOpacity: 0.5, weight: 2,
   }).bindTooltip(p.cn).addTo(map);
   parcelMkrs.push({ cn: p.cn, layer, origStyle: { color, fillColor: color, fillOpacity: 0.5, weight: 2 } });
+}
+
+// ── Клавиатура (главная карта) ───────────────────
+function _initMapKeyboard() {
+  document.addEventListener('keydown', e => {
+    if (document.getElementById('pdf-editor').style.display !== 'none') return;
+    if (e.target.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveProject(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undoPolyPt(); return; }
+    if (e.key === 'Escape') { finishPolyDraw(); setSt('Рисование отменено', ''); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !e.ctrlKey) {
+      const al = getActiveLayer();
+      if (al) deleteLayer({ stopPropagation: () => {} }, al.id);
+      return;
+    }
+    if (e.key === 'f' || e.key === 'F') { fitActive(); return; }
+    if (e.key === 'g' || e.key === 'G') {
+      if (!document.getElementById('btn-gen-szz').disabled) generateSzz();
+      return;
+    }
+  });
+}
+
+// ── Вспомогательная функция Turf polygon ─────────
+function _turfPoly(l) {
+  const ring = l.poly.map(p => [p[1], p[0]]);
+  ring.push(ring[0]);
+  return turf.polygon([ring]);
+}
+
+// ── Операции с полигонами ─────────────────────────
+function _applyPolyOp(opName, resultCoords, l1, l2, color) {
+  if (!resultCoords) { setSt('Результат операции пуст', 'err'); return; }
+  const coords = resultCoords.map(c => [c[1], c[0]]);
+  const ll = coords.map(p => L.latLng(p[0], p[1]));
+  const style = { color, weight: 2, fillColor: color, fillOpacity: 0.18 };
+  const layer = L.polygon(ll, style).addTo(map);
+  addMapLayer(l1.type, `${l1.name} ${opName} ${l2.name}`, coords, layer);
+  map.fitBounds(layer.getBounds(), { padding: [30, 30] });
+}
+
+function polyUnion() {
+  const al = getActiveLayer();
+  const sel2Id = parseInt(document.getElementById('poly-op-select')?.value);
+  const l2 = mapLayers.find(l => l.id === sel2Id);
+  if (!al || !l2) { setSt('Выбери активный слой и второй слой', 'err'); return; }
+  try {
+    const res = turf.union(_turfPoly(al), _turfPoly(l2));
+    if (!res) { setSt('Объединение невозможно', 'err'); return; }
+    const ring = res.geometry.type === 'MultiPolygon'
+      ? res.geometry.coordinates[0][0]
+      : res.geometry.coordinates[0];
+    _applyPolyOp('∪', ring, al, l2, al.color);
+    setSt(`Объединение: ${al.name} ∪ ${l2.name}`, 'ok');
+  } catch(e) { setSt('Ошибка объединения: ' + e.message, 'err'); }
+}
+
+function polyDifference() {
+  const al = getActiveLayer();
+  const sel2Id = parseInt(document.getElementById('poly-op-select')?.value);
+  const l2 = mapLayers.find(l => l.id === sel2Id);
+  if (!al || !l2) { setSt('Выбери активный слой и второй слой', 'err'); return; }
+  try {
+    const res = turf.difference(_turfPoly(al), _turfPoly(l2));
+    if (!res) { setSt('Нет разности — полигоны не пересекаются?', 'err'); return; }
+    const ring = res.geometry.type === 'MultiPolygon'
+      ? res.geometry.coordinates[0][0]
+      : res.geometry.coordinates[0];
+    _applyPolyOp('−', ring, al, l2, al.color);
+    setSt(`Вычитание: ${al.name} − ${l2.name}`, 'ok');
+  } catch(e) { setSt('Ошибка вычитания: ' + e.message, 'err'); }
+}
+
+function polyIntersect() {
+  const al = getActiveLayer();
+  const sel2Id = parseInt(document.getElementById('poly-op-select')?.value);
+  const l2 = mapLayers.find(l => l.id === sel2Id);
+  if (!al || !l2) { setSt('Выбери активный слой и второй слой', 'err'); return; }
+  try {
+    const res = turf.intersect(_turfPoly(al), _turfPoly(l2));
+    if (!res) { setSt('Полигоны не пересекаются', 'err'); return; }
+    const ring = res.geometry.type === 'MultiPolygon'
+      ? res.geometry.coordinates[0][0]
+      : res.geometry.coordinates[0];
+    _applyPolyOp('∩', ring, al, l2, '#22c55e');
+    setSt(`Пересечение: ${al.name} ∩ ${l2.name}`, 'ok');
+  } catch(e) { setSt('Ошибка пересечения: ' + e.message, 'err'); }
+}
+
+function _updatePolyOpsPanel(l) {
+  const panel = document.getElementById('poly-ops-panel');
+  if (!panel) return;
+  if (!l) { panel.style.display = 'none'; return; }
+  const others = mapLayers.filter(x => x.id !== l.id);
+  if (!others.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  const sel = document.getElementById('poly-op-select');
+  if (sel) {
+    sel.innerHTML = others.map(x =>
+      `<option value="${x.id}">[${x.type === 'szz' ? 'СЗЗ' : 'ЗУ'}] ${x.name}</option>`
+    ).join('');
+  }
 }
 
 function toggleFills() {

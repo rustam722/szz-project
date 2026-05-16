@@ -41,6 +41,10 @@ let _pdfGeoLayers = [];   // GeoJSON-слои на pdfMap (чтобы перер
 let _undoStack   = [];
 let _redoStack   = [];
 
+// ── Multi-select ──────────────────────────────────
+let pdfSelIds    = [];   // все выбранные объекты
+let _groupCounter = 0;
+
 // ── Copy / Paste ──────────────────────────────────
 let _clipboard   = null;
 
@@ -86,6 +90,7 @@ function enterPdfMode() {
   _initCanvasZoomWheel();
   _initCanvasDrawing();
   _initPathDrawing();
+  _initRubberBand();
   _initSidebarResize();
 
   setSt('Режим редактора PDF — выбирай объекты и настраивай', 'ok');
@@ -268,6 +273,58 @@ function _renderBezierSvg(obj) {
   return `<svg width="${d.w}" height="${d.h}" viewBox="0 0 ${d.w} ${d.h}" style="overflow:visible;display:block;pointer-events:none">
     <path d="${pathD}" fill="${fill}" stroke="${d.strokeColor}" stroke-width="${d.strokeW}" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>`;
+}
+
+// ── Звезда — 5 лучей ──────────────────────────────
+function _starPoints(w, h, sw) {
+  const cx = w / 2, cy = h / 2;
+  const outerR = Math.min(cx, cy) - sw / 2;
+  const innerR = outerR * 0.42;
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const ang = (i * Math.PI * 2 / 10) - Math.PI / 2;
+    const r = i % 2 === 0 ? outerR : innerR;
+    pts.push(`${(cx + r * Math.cos(ang)).toFixed(1)},${(cy + r * Math.sin(ang)).toFixed(1)}`);
+  }
+  return pts.join(' ');
+}
+
+// ── SVG-рендер для примитивных фигур ─────────────
+function _renderShapeContent(obj) {
+  const d = obj.data;
+  const sw = d.strokeW || 0;
+  const dash = d.strokeDash ? ` stroke-dasharray="${d.strokeDash}"` : '';
+  const fill = (d.bg && d.bg !== 'transparent') ? d.bg : 'none';
+  const stroke = (d.strokeColor && d.strokeColor !== 'transparent' && sw > 0) ? d.strokeColor : 'none';
+  const strokeAttr = stroke !== 'none' ? ` stroke="${stroke}" stroke-width="${sw}"${dash}` : '';
+  const w = Math.max(d.w, 2), h = Math.max(d.h, 2);
+
+  let innerSvg = '';
+  if (obj.type === 'ellipse') {
+    const cx = w / 2, cy = h / 2;
+    const rx = Math.max(0.5, cx - sw / 2), ry = Math.max(0.5, cy - sw / 2);
+    innerSvg = `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${fill}"${strokeAttr}/>`;
+  } else if (obj.type === 'line') {
+    const my = h / 2;
+    innerSvg = `<line x1="0" y1="${my}" x2="${w}" y2="${my}" stroke="${stroke !== 'none' ? stroke : d.strokeColor || '#ef4444'}" stroke-width="${sw || 2}"${dash} stroke-linecap="round"/>`;
+  } else if (obj.type === 'triangle') {
+    const pts = `${w/2},${sw/2} ${w-sw/2},${h-sw/2} ${sw/2},${h-sw/2}`;
+    innerSvg = `<polygon points="${pts}" fill="${fill}"${strokeAttr}/>`;
+  } else if (obj.type === 'diamond') {
+    const pts = `${w/2},${sw/2} ${w-sw/2},${h/2} ${w/2},${h-sw/2} ${sw/2},${h/2}`;
+    innerSvg = `<polygon points="${pts}" fill="${fill}"${strokeAttr}/>`;
+  } else if (obj.type === 'star') {
+    innerSvg = `<polygon points="${_starPoints(w, h, sw)}" fill="${fill}"${strokeAttr}/>`;
+  } else { // rect
+    const r = d.radius || 0;
+    innerSvg = `<rect x="${sw/2}" y="${sw/2}" width="${Math.max(0,w-sw)}" height="${Math.max(0,h-sw)}" rx="${r}" ry="${r}" fill="${fill}"${strokeAttr}/>`;
+  }
+
+  const textContent = ['rect','ellipse'].includes(obj.type) && (d.content !== undefined)
+    ? `<div class="ps-text-content" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:${d.textAlign==='left'?'flex-start':d.textAlign==='right'?'flex-end':'center'};padding:4px 8px;white-space:pre-wrap;word-break:break-word;pointer-events:none;user-select:none">${d.content || ''}</div>`
+    : '';
+
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="position:absolute;inset:0;pointer-events:none;overflow:visible">${innerSvg}</svg>${textContent}`;
 }
 
 function _renderCalloutHtml(obj) {
@@ -1113,11 +1170,19 @@ function _buildLeftToolbar() {
     <button ${T('callout')} id="pst-callout" data-tip="Выноска-облако — 1й клик=острие, 2й=бокс" onclick="setPdfTool('callout')" style="font-size:16px">💬</button>
     <button ${T('leader')} id="pst-leader" data-tip="Выноска с полочкой — клик на объект, потяни к тексту" onclick="setPdfTool('leader')" style="font-size:15px">⌐</button>
     <div class="ps-ltool-sep"></div>
+    <button class="ps-ltool" data-tip="Треугольник" onclick="setPdfTool('triangle-shape')" style="font-size:15px">△</button>
+    <button class="ps-ltool" data-tip="Ромб" onclick="setPdfTool('diamond-shape')" style="font-size:15px">◇</button>
+    <button class="ps-ltool" data-tip="Звезда" onclick="setPdfTool('star-shape')" style="font-size:14px">★</button>
+    <div class="ps-ltool-sep"></div>
     <button class="ps-ltool" data-tip="Легенда" onclick="addPdfLegend()">≡</button>
     <button class="ps-ltool" data-tip="Масштаб" onclick="addPdfScale()" style="font-size:13px">📏</button>
     <button class="ps-ltool" data-tip="Стрелка севера" onclick="addPdfNorth()" style="font-size:13px">🧭</button>
     <button class="ps-ltool" data-tip="Стрелка-указатель" onclick="createPdfObj('arrow',{name:'Стрелка'})">➡</button>
     <button class="ps-ltool" data-tip="Лупа — фрагмент карты" onclick="addPdfInset()" style="font-size:16px">🔍</button>
+    <div class="ps-ltool-sep"></div>
+    <button class="ps-ltool" data-tip="Группировать (Ctrl+G)" onclick="groupPdfObjs()" style="font-size:11px">⊞G</button>
+    <button class="ps-ltool" data-tip="Разгруппировать (Ctrl+Shift+G)" onclick="ungroupPdfObjs()" style="font-size:10px">⊟G</button>
+    <button class="ps-ltool" data-tip="Выбрать все (Ctrl+A)" onclick="selectAllPdfObjs()" style="font-size:11px">⊡A</button>
   `;
 }
 
@@ -1236,12 +1301,15 @@ const OBJ_DEFAULTS = {
   arrow:   { w:200, h:30,  bg:'transparent',            color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#ef4444',     strokeW:3, content:'__arrow__',  textShadow:false, textStrokeColor:'transparent', textStrokeW:0, arrowDir:'end', rotation:0 },
   path:    { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#3b82f6', strokeW:3, content:'__path__',   textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
   bezier:  { x:0,   y:0,  w:200, h:100, pts:[], closed:false, bg:'transparent', color:'transparent', fontSize:12, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#8b5cf6', strokeW:3, content:'__bezier__', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
-  callout: { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:false, strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
-  leader:  { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left', radius:0, shadow:false, strokeColor:'#0f172a', strokeW:1.5, content:'Подпись', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  callout:  { x:200, y:200, w:160, h:56, tailX:120, tailY:320, bg:'rgba(255,255,255,0.95)', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:8, shadow:false, strokeColor:'#334155', strokeW:2, content:'Выноска',    textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  leader:   { x:200, y:120, w:180, h:48, tailX:290, tailY:240, bg:'transparent', color:'#0f172a', fontSize:13, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'left', radius:0, shadow:false, strokeColor:'#0f172a', strokeW:1.5, content:'Подпись', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, rotation:0 },
+  triangle: { w:120, h:100, bg:'rgba(251,191,36,0.18)', color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#f59e0b', strokeW:2, content:'', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, strokeDash:'', opacity:1 },
+  diamond:  { w:100, h:130, bg:'rgba(167,139,250,0.18)', color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#a78bfa', strokeW:2, content:'', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, strokeDash:'', opacity:1 },
+  star:     { w:120, h:120, bg:'rgba(251,191,36,0.22)', color:'transparent', fontSize:14, fontFamily:'Segoe UI', fontWeight:'400', fontStyle:'normal', textDecoration:'none', textAlign:'center', radius:0, shadow:false, strokeColor:'#f59e0b', strokeW:2, content:'', textShadow:false, textStrokeColor:'transparent', textStrokeW:0, strokeDash:'', opacity:1 },
 };
 
 function _typeName(type) {
-  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка', path:'Путь', bezier:'Кривая', callout:'Выноска', leader:'Выноска-полочка' }[type] || type;
+  return { text:'Текст', rect:'Прямоугольник', ellipse:'Эллипс', line:'Линия', legend:'Легенда', scale:'Масштаб', north:'Стрелка С', image:'Изображение', inset:'Лупа', arrow:'Стрелка', path:'Путь', bezier:'Кривая', callout:'Выноска', leader:'Выноска-полочка', triangle:'Треугольник', diamond:'Ромб', star:'Звезда' }[type] || type;
 }
 
 function createPdfObj(type, overrides = {}) {
@@ -1275,15 +1343,34 @@ function _renderObj(obj) {
   }
 
   const d = obj.data;
-  const _isSvgType = ['path','bezier','north','callout','leader'].includes(obj.type);
+  const _svgShapes = ['rect','ellipse','line','triangle','diamond','star'];
+  const _isSvgType = ['path','bezier','north','callout','leader',..._svgShapes].includes(obj.type);
+
+  // Тень
+  let shadowVal = 'none';
+  if (d.shadow && !_svgShapes.includes(obj.type)) {
+    const sx = d.shadowX !== undefined ? d.shadowX : 4;
+    const sy = d.shadowY !== undefined ? d.shadowY : 4;
+    const sb = d.shadowBlur !== undefined ? d.shadowBlur : 14;
+    const sc = d.shadowColor || 'rgba(0,0,0,0.22)';
+    shadowVal = `${sx}px ${sy}px ${sb}px ${sc}`;
+  }
+
+  // Transform: поворот + flip
+  const transforms = [];
+  if (d.rotation) transforms.push(`rotate(${d.rotation}deg)`);
+  if (d.flipX)    transforms.push('scaleX(-1)');
+  if (d.flipY)    transforms.push('scaleY(-1)');
+  const transformVal = transforms.length ? transforms.join(' ') : 'none';
+
   el.style.cssText = `
     position:absolute;
     left:${d.x}px; top:${d.y}px;
     width:${d.w}px; height:${d.h}px;
     background:${_isSvgType ? 'transparent' : d.bg};
-    border-radius:${d.radius}px;
+    border-radius:${_isSvgType ? '0' : d.radius}px;
     border:${_isSvgType ? 'none' : d.strokeW > 0 ? `${d.strokeW}px solid ${d.strokeColor}` : 'none'};
-    box-shadow:${d.shadow && !_isSvgType ? '0 4px 14px rgba(0,0,0,0.18)' : 'none'};
+    box-shadow:${shadowVal};
     overflow:${_isSvgType ? 'visible' : 'hidden'};
     color:${d.color};
     font-size:${d.fontSize}px;
@@ -1292,21 +1379,23 @@ function _renderObj(obj) {
     font-style:${d.fontStyle};
     text-decoration:${d.textDecoration};
     text-align:${d.textAlign};
+    line-height:${d.lineHeight || 1.4};
+    letter-spacing:${d.letterSpacing || 0}px;
     display:${obj.visible ? 'flex' : 'none'};
     align-items:center;
     justify-content:${d.textAlign==='left'?'flex-start':d.textAlign==='right'?'flex-end':'center'};
-    overflow:hidden;
     box-sizing:border-box;
     cursor:${obj.locked ? 'not-allowed' : pdfTool==='select' ? 'grab' : 'crosshair'};
     z-index:${100 + pdfObjects.indexOf(obj)};
+    opacity:${d.opacity !== undefined ? d.opacity : 1};
     text-shadow:${d.textShadow ? '1px 1px 0 #fff,-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff' : 'none'};
     -webkit-text-stroke:${(d.textStrokeW > 0) ? `${d.textStrokeW}px ${d.textStrokeColor || '#000'}` : '0'};
     padding:${d.type==='legend' ? '12px' : d.type==='scale' ? '5px 10px' : d.type==='text' ? '6px 12px' : '0'};
     user-select:none;
-    transform:${d.rotation ? `rotate(${d.rotation}deg)` : 'none'};
+    transform:${transformVal};
     transform-origin:center center;
   `;
-  el.classList.toggle('ps-selected', obj.id === pdfSelId);
+  el.classList.toggle('ps-selected', pdfSelIds.includes(obj.id));
 
   // Контент
   _renderObjContent(el, obj);
@@ -1326,6 +1415,9 @@ function _renderObjContent(el, obj) {
   if (d.content === '__bezier__') { el.innerHTML = _renderBezierSvg(obj); return; }
   if (obj.type  === 'callout')    { el.innerHTML = _renderCalloutHtml(obj); return; }
   if (obj.type  === 'leader')     { el.innerHTML = _renderLeaderHtml(obj);  return; }
+  if (['rect','ellipse','line','triangle','diamond','star'].includes(obj.type)) {
+    el.innerHTML = _renderShapeContent(obj); return;
+  }
   if (d.type === 'image' && d.imgSrc) {
     el.innerHTML = `<img src="${d.imgSrc}" style="width:100%;height:100%;object-fit:contain;border-radius:${d.radius}px;pointer-events:none">`;
     return;
@@ -1479,21 +1571,50 @@ function _updateHandles(el, obj) {
 // ── Pointer Events для drag/resize ───────────────
 function _attachObjEvents(el, obj) {
   el.addEventListener('pointerdown', e => {
-    if (e.target.classList.contains('ps-handle')) return; // handled separately
+    if (e.target.classList.contains('ps-handle')) return;
     if (pdfTool !== 'select') return;
     e.stopPropagation();
     e.preventDefault();
 
-    // Выбрать
-    if (pdfSelId !== obj.id) selectPdfObj(obj.id);
+    // Shift+click — добавить / убрать из мультивыбора
+    if (e.shiftKey) {
+      selectPdfObj(obj.id, true);
+      return;
+    }
+
+    // Если кликнули на объект не из текущего выбора — переключить на него
+    if (!pdfSelIds.includes(obj.id)) selectPdfObj(obj.id);
+
+    // Проверка группы — если есть groupId, выбираем всю группу
+    const gid = obj.data.groupId;
+    if (gid && !e.shiftKey) {
+      const groupIds = pdfObjects.filter(o => o.data.groupId === gid).map(o => o.id);
+      if (groupIds.length > 1) {
+        pdfSelIds = groupIds;
+        pdfSelId  = obj.id;
+        pdfObjects.forEach(o => {
+          const oe = document.getElementById(o.id); if (!oe) return;
+          oe.classList.toggle('ps-selected', pdfSelIds.includes(o.id));
+          _updateHandles(oe, o);
+        });
+        _updateMultiSelBox(); _renderProps(); _renderLayersList();
+      }
+    }
+
     if (obj.locked) return;
 
-    // Drag
+    // Drag — сохраняем начальные позиции всех выбранных объектов
     _pushUndo();
     const startX = e.clientX, startY = e.clientY;
-    const ox = obj.data.x, oy = obj.data.y;
-    const origPts  = obj.data.pts  ? obj.data.pts.map(p => ({...p})) : null;
-    const origTailX = obj.data.tailX, origTailY = obj.data.tailY;
+    const origPos = new Map();
+    pdfSelIds.forEach(sid => {
+      const so = pdfObjects.find(x => x.id === sid); if (!so) return;
+      origPos.set(sid, {
+        x: so.data.x, y: so.data.y,
+        pts: so.data.pts ? so.data.pts.map(p => ({...p})) : null,
+        tailX: so.data.tailX, tailY: so.data.tailY,
+      });
+    });
     el.setPointerCapture(e.pointerId);
 
     function onMove(ev) {
@@ -1501,20 +1622,30 @@ function _attachObjEvents(el, obj) {
       const rect   = canvas.getBoundingClientRect();
       const scaleX = canvas.offsetWidth  / rect.width;
       const scaleY = canvas.offsetHeight / rect.height;
-      const nx = Math.round(ox + (ev.clientX - startX) * scaleX);
-      const ny = Math.round(oy + (ev.clientY - startY) * scaleY);
-      const snapped = _snapObject(obj, nx, ny);
-      const dx = snapped.x - ox, dy = snapped.y - oy;
-      obj.data.x = snapped.x;
-      obj.data.y = snapped.y;
-      // Двигаем точки пути
-      if (origPts)           obj.data.pts  = origPts.map(p => ({ x: p.x + dx, y: p.y + dy }));
-      if (origTailX !== undefined) { obj.data.tailX = origTailX + dx; obj.data.tailY = origTailY + dy; }
-      el.style.left = obj.data.x + 'px';
-      el.style.top  = obj.data.y + 'px';
-      if (['path','bezier','callout'].includes(obj.type)) { _renderObjContent(el, obj); _updateHandles(el, obj); }
+      const rawDX  = Math.round((ev.clientX - startX) * scaleX);
+      const rawDY  = Math.round((ev.clientY - startY) * scaleY);
+
+      // Snap только для основного объекта
+      const orig0 = origPos.get(obj.id);
+      if (!orig0) return;
+      const snapped = _snapObject(obj, orig0.x + rawDX, orig0.y + rawDY);
+      const dx = snapped.x - orig0.x, dy = snapped.y - orig0.y;
+
+      pdfSelIds.forEach(sid => {
+        const so = pdfObjects.find(x => x.id === sid); if (!so || so.locked) return;
+        const orig = origPos.get(sid); if (!orig) return;
+        so.data.x = orig.x + dx;
+        so.data.y = orig.y + dy;
+        if (orig.pts)              so.data.pts  = orig.pts.map(p => ({ x: p.x + dx, y: p.y + dy }));
+        if (orig.tailX !== undefined) { so.data.tailX = orig.tailX + dx; so.data.tailY = orig.tailY + dy; }
+        const se = document.getElementById(sid); if (!se) return;
+        se.style.left = so.data.x + 'px';
+        se.style.top  = so.data.y + 'px';
+        if (['path','bezier','callout'].includes(so.type)) { _renderObjContent(se, so); _updateHandles(se, so); }
+        if (_insetMaps[sid]) _insetMaps[sid].invalidateSize();
+      });
       _syncPropsXY();
-      if (_insetMaps[obj.id]) _insetMaps[obj.id].invalidateSize();
+      _updateMultiSelBox();
     }
     function onUp() {
       _clearSnapGuides();
@@ -1595,6 +1726,8 @@ function _onResizeStart(e, obj, handle) {
   const scaleX = canvas.offsetWidth  / rect.width;
   const scaleY = canvas.offsetHeight / rect.height;
 
+  const aspect = ow / Math.max(oh, 1);
+
   function onMove(ev) {
     const dx = (ev.clientX - startX) * scaleX;
     const dy = (ev.clientY - startY) * scaleY;
@@ -1604,6 +1737,12 @@ function _onResizeStart(e, obj, handle) {
     if (handle.includes('s'))  nh = Math.max(20, oh + dy);
     if (handle.includes('w')) { nx = ox + dx; nw = Math.max(40, ow - dx); }
     if (handle.includes('n')) { ny = oy + dy; nh = Math.max(20, oh - dy); }
+
+    // Shift = пропорциональный масштаб (aspect ratio lock)
+    if (ev.shiftKey) {
+      if (handle.includes('e') || handle.includes('w')) nh = Math.max(20, nw / aspect);
+      else nh = Math.max(20, nh), nw = Math.max(40, nh * aspect);
+    }
 
     obj.data.x = Math.round(nx); obj.data.y = Math.round(ny);
     obj.data.w = Math.round(nw); obj.data.h = Math.round(nh);
@@ -1628,7 +1767,7 @@ function _initCanvasDrawing() {
   canvas._canvasDrawBound = true;
 
   canvas.addEventListener('pointerdown', e => {
-    if (pdfTool === 'select' || pdfTool === 'image') return;
+    if (['select','image'].includes(pdfTool)) return;
     if (pdfMapDrag) return;
     if (e.target.closest('#pdf-map')) return;
     if (e.target.classList.contains('ps-obj') || e.target.closest('.ps-obj')) return;
@@ -1713,47 +1852,157 @@ function _initCanvasDrawing() {
       // Drag = область текстового блока. Острие под центром
       createPdfObj('leader', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
         tailX: Math.round(x + w / 2), tailY: Math.round(y + h + 60) });
+    } else if (pdfTool === 'triangle-shape') {
+      createPdfObj('triangle', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), name:'Треугольник' });
+    } else if (pdfTool === 'diamond-shape') {
+      createPdfObj('diamond', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), name:'Ромб' });
+    } else if (pdfTool === 'star-shape') {
+      createPdfObj('star', { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), name:'Звезда' });
     } else {
       createPdfObj(pdfTool, { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
     }
     setPdfTool('select');
   });
 
-  // Клик по пустому месту — снять выделение
+  // Клик по пустому месту — снять выделение (если rubber band не сработал)
   canvas.addEventListener('click', e => {
+    if (_rubberBandHandled) { _rubberBandHandled = false; return; }
     if (e.target === canvas || e.target.id === 'pdf-map') {
       selectPdfObj(null);
     }
   });
 }
 
+// ── Rubber band (резиновый прямоугольник выбора) ──
+function _initRubberBand() {
+  const canvas = document.getElementById('pdf-canvas');
+  if (!canvas || canvas._rubberBound) return;
+  canvas._rubberBound = true;
+
+  let _rs = null, _rb = null;
+
+  canvas.addEventListener('pointerdown', e => {
+    if (pdfTool !== 'select' || pdfMapDrag) return;
+    if (e.target.closest('.ps-obj') || e.target.closest('#pdf-map')) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.offsetWidth / rect.width, sy = canvas.offsetHeight / rect.height;
+    _rs = { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+    _rb = document.createElement('div');
+    _rb.style.cssText = `position:absolute;border:1.5px dashed #60a5fa;background:rgba(96,165,250,0.07);pointer-events:none;z-index:9997;left:${_rs.x}px;top:${_rs.y}px;width:0;height:0`;
+    canvas.appendChild(_rb);
+    canvas.setPointerCapture(e.pointerId);
+
+    function onMove(ev) {
+      if (!_rb || !_rs) return;
+      const r = canvas.getBoundingClientRect();
+      const cx = (ev.clientX - r.left) * (canvas.offsetWidth / r.width);
+      const cy = (ev.clientY - r.top)  * (canvas.offsetHeight / r.height);
+      const x = Math.min(cx, _rs.x), y = Math.min(cy, _rs.y);
+      Object.assign(_rb.style, { left: x+'px', top: y+'px', width: Math.abs(cx-_rs.x)+'px', height: Math.abs(cy-_rs.y)+'px' });
+    }
+    function onUp(ev) {
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp);
+      if (!_rb || !_rs) return;
+      _rb.remove(); _rb = null;
+      const r = canvas.getBoundingClientRect();
+      const cx = (ev.clientX - r.left) * (canvas.offsetWidth / r.width);
+      const cy = (ev.clientY - r.top)  * (canvas.offsetHeight / r.height);
+      const x = Math.min(cx, _rs.x), y = Math.min(cy, _rs.y);
+      const w = Math.abs(cx - _rs.x), h = Math.abs(cy - _rs.y);
+      _rs = null;
+      if (w < 6 && h < 6) { if (!ev.shiftKey) selectPdfObj(null); return; }
+      const ids = pdfObjects.filter(o => {
+        if (!o.visible || o.locked) return false;
+        const d = o.data;
+        return d.x < x + w && d.x + d.w > x && d.y < y + h && d.y + d.h > y;
+      }).map(o => o.id);
+      if (!ids.length) { if (!ev.shiftKey) selectPdfObj(null); return; }
+      if (ev.shiftKey) { ids.forEach(id => { if (!pdfSelIds.includes(id)) pdfSelIds.push(id); }); }
+      else { pdfSelIds = ids; }
+      pdfSelId = pdfSelIds[0] || null;
+      pdfObjects.forEach(o => {
+        const oe = document.getElementById(o.id); if (!oe) return;
+        oe.classList.toggle('ps-selected', pdfSelIds.includes(o.id));
+        _updateHandles(oe, o);
+      });
+      _rubberBandHandled = true;
+      _updateMultiSelBox(); _renderProps(); _renderLayersList();
+    }
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+  });
+}
+
 // ── Выделение ─────────────────────────────────────
-function selectPdfObj(id) {
-  pdfSelId = id;
+function selectPdfObj(id, addToSel = false) {
+  if (!addToSel) {
+    pdfSelIds = id ? [id] : [];
+    pdfSelId  = id;
+  } else if (id) {
+    const idx = pdfSelIds.indexOf(id);
+    if (idx > -1) {
+      pdfSelIds.splice(idx, 1);
+      pdfSelId = pdfSelIds.length ? pdfSelIds[pdfSelIds.length - 1] : null;
+    } else {
+      pdfSelIds.push(id);
+      pdfSelId = id;
+    }
+  }
+
   pdfObjects.forEach(obj => {
     const el = document.getElementById(obj.id);
     if (!el) return;
-    el.classList.toggle('ps-selected', obj.id === id);
+    el.classList.toggle('ps-selected', pdfSelIds.includes(obj.id));
     _updateHandles(el, obj);
     el.style.cursor = obj.locked ? 'not-allowed' : pdfTool === 'select' ? 'grab' : 'crosshair';
   });
+  _updateMultiSelBox();
   _renderProps();
   _renderLayersList();
 }
 
+function _updateMultiSelBox() {
+  let box = document.getElementById('pdf-multi-sel-box');
+  if (pdfSelIds.length <= 1) { if (box) box.style.display = 'none'; return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'pdf-multi-sel-box';
+    box.style.cssText = 'position:absolute;border:2px dashed #60a5fa;pointer-events:none;z-index:9998;opacity:0.75;border-radius:2px;';
+    const canvas = document.getElementById('pdf-canvas');
+    if (canvas) canvas.appendChild(box);
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  pdfSelIds.forEach(sid => {
+    const o = pdfObjects.find(x => x.id === sid); if (!o) return;
+    const d = o.data;
+    minX = Math.min(minX, d.x); minY = Math.min(minY, d.y);
+    maxX = Math.max(maxX, d.x + d.w); maxY = Math.max(maxY, d.y + d.h);
+  });
+  const pad = 5;
+  Object.assign(box.style, {
+    left: (minX - pad) + 'px', top: (minY - pad) + 'px',
+    width: (maxX - minX + pad*2) + 'px', height: (maxY - minY + pad*2) + 'px',
+    display: 'block',
+  });
+}
+
 // ── Действия с объектами ──────────────────────────
 function deletePdfObj() {
-  if (!pdfSelId) return;
+  if (!pdfSelIds.length) return;
   _pushUndo();
-  // Убиваем inset-карту если есть
-  if (_insetMaps[pdfSelId]) {
-    try { _insetMaps[pdfSelId].remove(); } catch(e) {}
-    delete _insetMaps[pdfSelId];
-  }
-  const el = document.getElementById(pdfSelId);
-  if (el) el.remove();
-  pdfObjects = pdfObjects.filter(o => o.id !== pdfSelId);
+  const toDelete = [...pdfSelIds];
+  toDelete.forEach(id => {
+    if (_insetMaps[id]) { try { _insetMaps[id].remove(); } catch(e) {} delete _insetMaps[id]; }
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  });
+  pdfObjects = pdfObjects.filter(o => !toDelete.includes(o.id));
   pdfSelId   = null;
+  pdfSelIds  = [];
+  const box = document.getElementById('pdf-multi-sel-box');
+  if (box) box.style.display = 'none';
   _renderLayersList(); _renderProps(); _saveState();
 }
 
@@ -1783,6 +2032,51 @@ function movePdfObjDown() {
   if (idx < 0 || idx >= pdfObjects.length-1) return;
   [pdfObjects[idx+1], pdfObjects[idx]] = [pdfObjects[idx], pdfObjects[idx+1]];
   _renderAll(); _renderLayersList(); _saveState();
+}
+
+// ── Flip (зеркальное отражение) ───────────────────
+function flipPdfObj(axis) {
+  const obj = pdfObjects.find(o => o.id === pdfSelId);
+  if (!obj || obj.locked) return;
+  _pushUndo();
+  if (axis === 'h') obj.data.flipX = !obj.data.flipX;
+  else              obj.data.flipY = !obj.data.flipY;
+  _renderObj(obj); _renderProps(); _saveState();
+}
+
+// ── Группировка ───────────────────────────────────
+function groupPdfObjs() {
+  if (pdfSelIds.length < 2) { setSt('Выбери 2+ объекта (Shift+клик)', 'err'); return; }
+  _pushUndo();
+  const gid = 'grp_' + (++_groupCounter);
+  pdfSelIds.forEach(id => {
+    const o = pdfObjects.find(x => x.id === id);
+    if (o) o.data.groupId = gid;
+  });
+  _renderLayersList(); _saveState();
+  setSt('Объекты сгруппированы (' + pdfSelIds.length + ' шт.) ✓', 'ok');
+}
+
+function ungroupPdfObjs() {
+  const obj = pdfObjects.find(o => o.id === pdfSelId);
+  if (!obj || !obj.data.groupId) { setSt('Нет группировки', 'err'); return; }
+  _pushUndo();
+  const gid = obj.data.groupId;
+  pdfObjects.forEach(o => { if (o.data.groupId === gid) delete o.data.groupId; });
+  _renderLayersList(); _saveState();
+  setSt('Группировка отменена ✓', 'ok');
+}
+
+// ── Выбрать все объекты ───────────────────────────
+function selectAllPdfObjs() {
+  pdfSelIds = pdfObjects.filter(o => o.visible && !o.locked).map(o => o.id);
+  pdfSelId  = pdfSelIds[0] || null;
+  pdfObjects.forEach(o => {
+    const e = document.getElementById(o.id); if (!e) return;
+    e.classList.toggle('ps-selected', pdfSelIds.includes(o.id));
+    _updateHandles(e, o);
+  });
+  _updateMultiSelBox(); _renderProps(); _renderLayersList();
 }
 
 const PDF_FONTS = [
@@ -1861,6 +2155,33 @@ function _renderProps() {
         <input class="pp-inp-sm" type="number" id="pp-sw" value="${d.strokeW}" min="0" max="20" oninput="applyPdfProp()">
         <span style="font-size:9px;color:#4b5563">px</span>
       </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Пунктир</span>
+        <select class="pp-inp" id="pp-dash" onchange="applyPdfProp()" style="font-size:10px">
+          <option value="" ${!d.strokeDash?'selected':''}>— Сплошная</option>
+          <option value="8,4" ${d.strokeDash==='8,4'?'selected':''}>- - - Пунктир</option>
+          <option value="3,5" ${d.strokeDash==='3,5'?'selected':''}>··· Точки</option>
+          <option value="12,4,3,4" ${d.strokeDash==='12,4,3,4'?'selected':''}>-·- Штрих-пунктир</option>
+        </select>
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Прозрачн.</span>
+        <input class="pp-slider" type="range" id="pp-opacity" min="0" max="100" value="${Math.round((d.opacity!==undefined?d.opacity:1)*100)}" oninput="applyPdfProp()">
+        <span id="pp-opacity-val" style="font-size:10px;color:#6b7280;min-width:28px">${Math.round((d.opacity!==undefined?d.opacity:1)*100)}%</span>
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Тень</span>
+        <input type="checkbox" id="pp-shadow" ${d.shadow?'checked':''} onchange="applyPdfProp()">
+        <input class="pp-color" type="color" id="pp-shadow-color" value="${d.shadowColor||'#000000'}" oninput="applyPdfProp()" style="width:28px;height:28px">
+        <input class="pp-inp-sm" type="number" id="pp-shadow-x" value="${d.shadowX||4}" min="-40" max="40" oninput="applyPdfProp()" style="width:32px" title="X">
+        <input class="pp-inp-sm" type="number" id="pp-shadow-y" value="${d.shadowY||4}" min="-40" max="40" oninput="applyPdfProp()" style="width:32px" title="Y">
+        <input class="pp-inp-sm" type="number" id="pp-shadow-blur" value="${d.shadowBlur||14}" min="0" max="60" oninput="applyPdfProp()" style="width:32px" title="Blur">
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Отразить</span>
+        <button class="pp-sbtn" onclick="flipPdfObj('h')" title="Горизонтально" style="${d.flipX?'border-color:#60a5fa;color:#60a5fa':''}">↔ Г</button>
+        <button class="pp-sbtn" onclick="flipPdfObj('v')" title="Вертикально" style="${d.flipY?'border-color:#60a5fa;color:#60a5fa':''}">↕ В</button>
+      </div>
 
       ${showText ? `
       <div class="pp-sep"></div>
@@ -1890,6 +2211,16 @@ function _renderProps() {
         <span class="pp-lbl" style="margin-left:4px">Обв.</span>
         <input class="pp-color" type="color" id="pp-tsc" value="${(d.textStrokeColor && d.textStrokeColor !== 'transparent') ? d.textStrokeColor : '#000000'}" oninput="applyPdfProp()">
         <input class="pp-inp-sm" type="number" id="pp-tsw" value="${d.textStrokeW || 0}" min="0" max="10" oninput="applyPdfProp()" style="width:34px">
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Межстрочн.</span>
+        <input class="pp-slider" type="range" id="pp-lh" min="80" max="300" value="${Math.round((d.lineHeight||1.4)*100)}" oninput="applyPdfProp()">
+        <span id="pp-lh-val" style="font-size:10px;color:#6b7280;min-width:28px">${Math.round((d.lineHeight||1.4)*100)}%</span>
+      </div>
+      <div class="pp-row">
+        <span class="pp-lbl">Кернинг</span>
+        <input class="pp-inp-sm" type="number" id="pp-spacing" value="${d.letterSpacing||0}" min="-5" max="30" step="0.5" oninput="applyPdfProp()" style="width:44px">
+        <span style="font-size:9px;color:#4b5563">px</span>
       </div>
       ` : ''}
 
@@ -1974,10 +2305,37 @@ function applyPdfProp() {
   const sw = parseInt(document.getElementById('pp-sw')?.value) || 0;
   const sc = document.getElementById('pp-stroke')?.value || '#334155';
   d.strokeW = sw;
-  // Для путей и кривых обводка всегда применяется (иначе ничего не видно)
-  d.strokeColor = (['path','bezier'].includes(obj.type) || sw > 0) ? sc : 'transparent';
+  d.strokeColor = (['path','bezier','triangle','diamond','star','rect','ellipse','line'].includes(obj.type) || sw > 0) ? sc : 'transparent';
+  d.strokeDash  = document.getElementById('pp-dash')?.value || '';
   if (document.getElementById('pp-radius')) d.radius = parseInt(document.getElementById('pp-radius').value) || 0;
-  if (document.getElementById('pp-shadow')) d.shadow = document.getElementById('pp-shadow').checked;
+
+  // Shadow
+  if (document.getElementById('pp-shadow')) {
+    d.shadow      = document.getElementById('pp-shadow').checked;
+    d.shadowColor = document.getElementById('pp-shadow-color')?.value || 'rgba(0,0,0,0.22)';
+    d.shadowX     = parseInt(document.getElementById('pp-shadow-x')?.value) || 4;
+    d.shadowY     = parseInt(document.getElementById('pp-shadow-y')?.value) || 4;
+    d.shadowBlur  = parseInt(document.getElementById('pp-shadow-blur')?.value) || 14;
+  }
+
+  // Opacity
+  const opEl = document.getElementById('pp-opacity');
+  if (opEl) {
+    d.opacity = parseInt(opEl.value) / 100;
+    const ov = document.getElementById('pp-opacity-val');
+    if (ov) ov.textContent = Math.round(d.opacity * 100) + '%';
+  }
+
+  // Line-height & letter-spacing
+  const lhEl = document.getElementById('pp-lh');
+  if (lhEl) {
+    d.lineHeight = parseInt(lhEl.value) / 100;
+    const lhv = document.getElementById('pp-lh-val');
+    if (lhv) lhv.textContent = lhEl.value + '%';
+  }
+  const spEl = document.getElementById('pp-spacing');
+  if (spEl) d.letterSpacing = parseFloat(spEl.value) || 0;
+
   if (document.getElementById('pp-rotation')) {
     d.rotation = parseFloat(document.getElementById('pp-rotation').value) || 0;
     const rv = document.getElementById('pp-rotation-val');
@@ -2169,6 +2527,9 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.shiftKey && e.key==='Z'))) { e.preventDefault(); redoPdf(); }
   if ((e.ctrlKey||e.metaKey) && e.key==='c') { e.preventDefault(); copyPdfObj(); }
   if ((e.ctrlKey||e.metaKey) && e.key==='v') { e.preventDefault(); pastePdfObj(); }
+  if ((e.ctrlKey||e.metaKey) && e.key==='a') { e.preventDefault(); selectAllPdfObjs(); }
+  if ((e.ctrlKey||e.metaKey) && e.key==='g' && e.shiftKey)  { e.preventDefault(); ungroupPdfObjs(); }
+  else if ((e.ctrlKey||e.metaKey) && e.key==='g')           { e.preventDefault(); groupPdfObjs(); }
 
   // Стрелки — двигать объект
   if (pdfSelId && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {

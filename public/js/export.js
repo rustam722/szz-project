@@ -140,6 +140,26 @@ async function exportWord() {
   btn.textContent = '⬇ Word'; btn.disabled = false;
 }
 
+function exportGeoJSON() {
+  if (!mapLayers.length) { setSt('Нет слоёв для экспорта', 'err'); return; }
+  const features = mapLayers.map(l => {
+    const ring = l.poly.map(p => [p[1], p[0]]);
+    ring.push(ring[0]);
+    return {
+      type: 'Feature',
+      properties: { name: l.name, type: l.type, color: l.color },
+      geometry: { type: 'Polygon', coordinates: [ring] },
+    };
+  });
+  const geojson = { type: 'FeatureCollection', features };
+  const json = JSON.stringify(geojson, null, 2);
+  const al = getActiveLayer();
+  const fname = (al ? al.name : 'szz').replace(/[^а-яёa-z0-9_]/gi, '_').slice(0, 40);
+  _download('data:application/geo+json;charset=utf-8,' + encodeURIComponent(json),
+    `${fname}_${_today()}.geojson`);
+  setSt(`GeoJSON экспортирован: ${features.length} слоёв`, 'ok');
+}
+
 function _download(href, filename) {
   const a = document.createElement('a');
   a.href = href; a.download = filename; a.click();
