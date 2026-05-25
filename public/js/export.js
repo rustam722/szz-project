@@ -14,7 +14,13 @@ async function _download(blobOrUrl, filename) {
         b64 = blobOrUrl.split(',')[1];
       } else if (blobOrUrl instanceof Blob) {
         const buf = await blobOrUrl.arrayBuffer();
-        b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        const chunk = 8192;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        b64 = btoa(bin);
       } else {
         // blob: URL → fetch → base64
         const r   = await fetch(blobOrUrl);
@@ -45,7 +51,8 @@ function exportCSV() {
     r.inP ? 'да' : 'пересечение', r.zone || ''
   ]));
   const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g,'""')}"`).join(',')).join('\r\n');
-  _download('data:text/csv;charset=utf-8,' + encodeURIComponent('﻿' + csv), `szz_parcels_${_today()}.csv`);
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  _download(blob, `szz_parcels_${_today()}.csv`);
 }
 
 // ── Excel (XLSX) ─────────────────────────────────

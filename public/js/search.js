@@ -179,28 +179,37 @@ async function searchParcels() {
   }
 
   setProgress(100);
-  // Только участки полностью внутри СЗЗ — пересечения не показываем и не выгружаем
-  foundParcels = [...inside];
+  // Показываем внутри + касающиеся; те что вообще не попадают — скрыты
+  foundParcels = [...inside, ...cross];
   inside.forEach(addParcelLayer);
+  cross.forEach(addParcelLayer);
   toggleFills();
-  renderResults(inside);
+  renderResults(inside, cross);
   setProgress(null);
   const excelBtn = document.getElementById('btn-export-excel');
   document.getElementById('btn-export').disabled      = !foundParcels.length;
   document.getElementById('btn-export-word').disabled = !foundParcels.length;
   if (excelBtn) excelBtn.disabled = !foundParcels.length;
   btn.disabled = false;
-  setSt(`✓ Найдено: ${inside.length} ЗУ внутри СЗЗ${cross.length ? ` (пересечений скрыто: ${cross.length})` : ''}`, 'ok');
+  setSt(`✓ Внутри: ${inside.length} | Касаются: ${cross.length} | Всего: ${foundParcels.length} ЗУ`, 'ok');
 }
 
-function renderResults(inside) {
+function renderResults(inside, cross) {
   const list = document.getElementById('res-list');
-  document.getElementById('res-cnt').textContent = inside.length;
-  if (!inside.length) {
-    list.innerHTML = '<div class="empty">🔎 ЗУ внутри СЗЗ не найдено</div>'; return;
+  const total = inside.length + cross.length;
+  document.getElementById('res-cnt').textContent = total;
+  if (!total) {
+    list.innerHTML = '<div class="empty">🔎 ЗУ не найдено</div>'; return;
   }
-  let html = `<div class="res-section-hdr inside">✓ Внутри СЗЗ — ${inside.length} уч.</div>`;
-  html += inside.map(parcelCard).join('');
+  let html = '';
+  if (inside.length) {
+    html += `<div class="res-section-hdr inside">✓ Внутри СЗЗ — ${inside.length} уч.</div>`;
+    html += inside.map(parcelCard).join('');
+  }
+  if (cross.length) {
+    html += `<div class="res-section-hdr cross">⚠ Касаются СЗЗ — ${cross.length} уч.</div>`;
+    html += cross.map(parcelCard).join('');
+  }
   list.innerHTML = html;
 }
 
@@ -209,7 +218,7 @@ function parcelCard(r) {
     <div class="pcn">${r.cn}</div>
     <div class="paddr">${r.addr || 'адрес не указан'}</div>
     <div class="ptags">
-      <span class="tag tin">✓ внутри</span>
+      <span class="tag ${r.inP?'tin':'tcrs'}">${r.inP?'✓ внутри':'⚠ касается'}</span>
       ${r.area?`<span class="tag tmuted">${r.area}</span>`:''}
     </div>
   </div>`;
