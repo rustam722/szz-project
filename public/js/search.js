@@ -179,33 +179,28 @@ async function searchParcels() {
   }
 
   setProgress(100);
-  foundParcels = [...inside, ...cross];
+  // Только участки полностью внутри СЗЗ — пересечения не показываем и не выгружаем
+  foundParcels = [...inside];
   inside.forEach(addParcelLayer);
-  cross.forEach(addParcelLayer);
   toggleFills();
-  renderResults(inside, cross);
+  renderResults(inside);
   setProgress(null);
+  const excelBtn = document.getElementById('btn-export-excel');
   document.getElementById('btn-export').disabled      = !foundParcels.length;
   document.getElementById('btn-export-word').disabled = !foundParcels.length;
+  if (excelBtn) excelBtn.disabled = !foundParcels.length;
   btn.disabled = false;
-  setSt(`✓ Внутри: ${inside.length} ЗУ | Пересечение: ${cross.length} ЗУ`, 'ok');
+  setSt(`✓ Найдено: ${inside.length} ЗУ внутри СЗЗ${cross.length ? ` (пересечений скрыто: ${cross.length})` : ''}`, 'ok');
 }
 
-function renderResults(inside, cross) {
+function renderResults(inside) {
   const list = document.getElementById('res-list');
   document.getElementById('res-cnt').textContent = inside.length;
-  if (!inside.length && !cross.length) {
-    list.innerHTML = '<div class="empty">🔎 ЗУ не найдено</div>'; return;
+  if (!inside.length) {
+    list.innerHTML = '<div class="empty">🔎 ЗУ внутри СЗЗ не найдено</div>'; return;
   }
-  let html = '';
-  if (inside.length) {
-    html += `<div class="res-section-hdr inside">✓ Внутри СЗЗ — ${inside.length} уч.</div>`;
-    html += inside.map(parcelCard).join('');
-  }
-  if (cross.length) {
-    html += `<div class="res-section-hdr cross">⚠ Пересечение — ${cross.length} уч.</div>`;
-    html += cross.map(parcelCard).join('');
-  }
+  let html = `<div class="res-section-hdr inside">✓ Внутри СЗЗ — ${inside.length} уч.</div>`;
+  html += inside.map(parcelCard).join('');
   list.innerHTML = html;
 }
 
@@ -214,7 +209,7 @@ function parcelCard(r) {
     <div class="pcn">${r.cn}</div>
     <div class="paddr">${r.addr || 'адрес не указан'}</div>
     <div class="ptags">
-      <span class="tag ${r.inP?'tin':'tcrs'}">${r.inP?'✓ внутри':'⚠ пересечение'}</span>
+      <span class="tag tin">✓ внутри</span>
       ${r.area?`<span class="tag tmuted">${r.area}</span>`:''}
     </div>
   </div>`;
