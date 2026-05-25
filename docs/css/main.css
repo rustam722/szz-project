@@ -796,3 +796,61 @@ textarea {
 }
 .nspd-chip.ok  { background: #0d2218; border: 1px solid #16a34a; color: #4ade80; }
 .nspd-chip.err { background: #1c0b0b; border: 1px solid #dc2626; color: #f87171; }
+
+/* ── Активная кнопка инструмента (полигон/координаты) ── */
+.section-hdr.active {
+  color: var(--acc2);
+  background: #1a2d50;
+}
+
+/* ── Панель информации об участке ── */
+#parcel-info-panel {
+  position: absolute;
+  top: 10px;
+  right: 48px;
+  width: 300px;
+  max-height: calc(100% - 20px);
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  overflow: hidden;
+  animation: pi-slide-in .15s ease-out;
+}
+@keyframes pi-slide-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.pi-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--bd);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.pi-title-block { flex: 1; min-width: 0; }
+.pi-type { font-size: 10px; color: var(--tx2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
+.pi-cn { font-size: 13px; font-weight: 700; color: var(--tx); font-family: monospace; word-break: break-all; margin-bottom: 5px; }
+.pi-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; }
+.pi-badge.inside { background: #14532d; color: #4ade80; border: 1px solid #166534; }
+.pi-badge.cross  { background: #451a03; color: #fbbf24; border: 1px solid #78350f; }
+.pi-close { background: none; border: none; color: var(--tx2); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 5px; border-radius: 5px; flex-shrink: 0; margin-top: -2px; }
+.pi-close:hover { background: var(--bg3); color: var(--tx); }
+.pi-body { overflow-y: auto; flex: 1; padding: 4px 0; }
+.pi-body::-webkit-scrollbar { width: 3px; }
+.pi-body::-webkit-scrollbar-thumb { background: var(--bd); border-radius: 2px; }
+.pi-section { padding: 6px 14px 2px; font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--acc2); margin-top: 4px; border-top: 1px solid rgba(45,55,72,0.6); }
+.pi-section:first-child { border-top: none; margin-top: 0; }
+.pi-row { padding: 4px 14px 6px; }
+.pi-key { font-size: 10px; color: var(--tx2); margin-bottom: 2px; }
+.pi-val { font-size: 12px; color: var(--tx); word-break: break-word; line-height: 1.45; }
+.pi-val.mono { font-family: monospace; }
+.pi-val.cost { color: #4ade80; font-weight: 600; }
+.pi-footer { padding: 10px 14px; border-top: 1px solid var(--bd); flex-shrink: 0; }
+.pi-link { display: block; text-align: center; font-size: 12px; color: var(--acc2); text-decoration: none; padding: 6px 10px; border: 1px solid var(--bd); border-radius: 6px; background: var(--bg3); transition: background .1s, color .1s; }
+.pi-link:hover { background: var(--bg); color: #93c5fd; }

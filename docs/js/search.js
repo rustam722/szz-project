@@ -4,6 +4,15 @@
 
 'use strict';
 
+const STATECD = {
+  '1': 'Временный', '2': 'Учтённый', '3': 'Ранее учтённый',
+  '4': 'Архивный',  '5': 'Снятый с учёта',
+};
+const RIFR = {
+  '1': 'Государственная (федеральная)', '2': 'Государственная (субъекта РФ)',
+  '3': 'Муниципальная', '4': 'Частная', '0': 'Неустановленная',
+};
+
 // ── Прокси ───────────────────────────────────────
 // Локальный proxy.py на 127.0.0.1:8765
 // Запуск: двойной клик на «Запустить прокси.command»
@@ -173,7 +182,11 @@ async function searchParcels() {
       }
     } catch { status = pip(cLat, cLon, szzPoly) ? 'inside' : 'out'; }
 
-    const record = { cn, addr, cat, util, area, zone, lat: cLat, lon: cLon, inP: status === 'inside', geometry: g };
+    const record = {
+      cn, addr, cat, util, area, zone, lat: cLat, lon: cLon, inP: status === 'inside', geometry: g,
+      kvartal: cn.split(':').slice(0, 3).join(':'),
+      status: '', ownership: '', cad_cost: '', cad_unit: '', date_cn: '',
+    };
     if (status === 'inside') inside.push(record);
     else if (status === 'cross') cross.push(record);
   }
@@ -184,6 +197,14 @@ async function searchParcels() {
   inside.forEach(addParcelLayer);
   cross.forEach(addParcelLayer);
   toggleFills();
+
+  if (foundParcels.length) {
+    setSt(`Загружаю детали (${foundParcels.length} уч.)…`, 'spin');
+    setProgress(0);
+    await _enrichParcels(foundParcels);
+    setProgress(null);
+  }
+
   renderResults(inside, cross);
   setProgress(null);
   const excelBtn = document.getElementById('btn-export-excel');
@@ -214,7 +235,7 @@ function renderResults(inside, cross) {
 }
 
 function parcelCard(r) {
-  return `<div class="pcard" id="card-${r.cn.replace(/\W/g,'_')}" onclick="highlightParcel('${r.cn}')">
+  return `<div class="pcard" id="card-${r.cn.replace(/\W/g,'_')}" onclick="selectParcel('${r.cn}')">
     <div class="pcn">${r.cn}</div>
     <div class="paddr">${r.addr || 'адрес не указан'}</div>
     <div class="ptags">
@@ -222,4 +243,44 @@ function parcelCard(r) {
       ${r.area?`<span class="tag tmuted">${r.area}</span>`:''}
     </div>
   </div>`;
+}
+
+async function _enrichParcels(parcels) {
+  const CONCURRENCY = 5;
+  let done = 0;
+  const total = parcels.length;
+
+  async function fetchDetail(p) {
+    try {
+      const r = await fetchSafe(`${LOCAL_PROXY}/pkk/detail?cn=${encodeURIComponent(p.cn)}`, 15000);
+      if (!r.ok) return;
+      const data = await r.json();
+      const a = data.attrs || {};
+      if (!p.util && a.util_by_doc)  p.util = a.util_by_doc;
+      if (!p.util && a.util_by_doc2) p.util = a.util_by_doc2;
+      if (!p.zone && a.fp)           p.zone = a.fp;
+      if (!p.zone && a.fp_name)      p.zone = a.fp_name;
+      if (!p.cat) {
+        const rawCat = String(a.category_type || '');
+        p.cat = CATEGORIES[rawCat] || a.category_type_desc || rawCat || '';
+      }
+      if (!p.area && a.area_value) p.area = `${a.area_value} ${a.area_unit || 'кв. м'}`;
+      p.status    = STATECD[String(a.statecd ?? '')] || '';
+      p.ownership = RIFR[String(a.rifr ?? a.ownershp ?? '')] || a.ownership_form || '';
+      const cadCostRaw = a.cad_cost ?? a.cadCost ?? a.cad_cost_value;
+      if (cadCostRaw) p.cad_cost = Number(cadCostRaw).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' руб.';
+      const cadUnitRaw = a.kpzu ?? a.kv ?? a.specific_cost ?? a.cad_cost_kv;
+      if (cadUnitRaw) p.cad_unit = Number(cadUnitRaw).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' руб./кв. м';
+      const dateRaw = a.date_create ?? a.date_reg ?? a.reg_date;
+      if (dateRaw) p.date_cn = String(dateRaw).replace(/^(\d{4})-(\d{2})-(\d{2}).*/, '$3.$2.$1');
+    } catch(e) {}
+    done++;
+    setProgress(Math.round(done / total * 100));
+    setSt(`Детали: ${done}/${total}`, 'spin');
+  }
+
+  for (let i = 0; i < parcels.length; i += CONCURRENCY) {
+    await Promise.all(parcels.slice(i, i + CONCURRENCY).map(fetchDetail));
+    if (i + CONCURRENCY < parcels.length) await new Promise(r => setTimeout(r, 200));
+  }
 }

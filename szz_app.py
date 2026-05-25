@@ -46,6 +46,32 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if path == "/ping":
             self._json(200, {"ok": True, "proxy": "szz-app"}); return
 
+        if path == "/pkk/detail":
+            qs = parse_qs(query, keep_blank_values=True)
+            cn = qs.get("cn", [""])[-1].strip()
+            if not cn:
+                self._json(400, {"error": "cn required"}); return
+            try:
+                from pynspd import Nspd
+                with Nspd(client_timeout=30, client_retries=2, trust_env=True) as nspd:
+                    result = nspd.search_by_cadastral_number(cn)
+                if not result:
+                    self._json(404, {"error": "not found"}); return
+                feat = result[0] if isinstance(result, list) else result
+                p = feat.properties.options
+                attrs = {}
+                for field in ["cad_num","util_by_doc","util_by_doc2","category_type","fp","fp_name",
+                               "area_value","area_unit","statecd","rifr","ownershp","ownership_form",
+                               "cad_cost","kpzu","kv","date_create","date_reg","reg_date",
+                               "readable_address","specified_area","declared_area"]:
+                    val = getattr(p, field, None)
+                    if val is not None:
+                        attrs[field] = val
+                self._json(200, {"attrs": attrs})
+            except Exception as e:
+                self._json(502, {"error": str(e)})
+            return
+
         if path != "/pkk":
             self._json(404, {"error": "not found"}); return
 

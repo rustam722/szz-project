@@ -628,20 +628,88 @@ function navToParcel(val) {
   }
 }
 
-// ── Подсветка участка ─────────────────────────────
-function highlightParcel(cn) {
-  const p = parcelMkrs.find(x => x.cn === cn);
-  if (p && p.layer) {
-    map.fitBounds(p.layer.getBounds ? p.layer.getBounds() : p.layer.getLatLng().toBounds(100), { padding: [60,60] });
-    p.layer.setStyle ? p.layer.setStyle({ color: '#22c55e', weight: 4 }) : null;
-    setTimeout(() => { if (p.layer.setStyle) p.layer.setStyle(p.origStyle); }, 2000);
+// ── Подсветка / выбор участка ─────────────────────
+function highlightParcel(cn) { selectParcel(cn); }
+
+let selectedParcelCn = null;
+
+function selectParcel(cn) {
+  if (selectedParcelCn && selectedParcelCn !== cn) {
+    const prev = parcelMkrs.find(x => x.cn === selectedParcelCn);
+    if (prev && prev.layer && prev.layer.setStyle) prev.layer.setStyle(prev.origStyle);
+    const prevCard = document.getElementById('card-' + selectedParcelCn.replace(/\W/g,'_'));
+    if (prevCard) prevCard.classList.remove('selected');
+  }
+  selectedParcelCn = cn;
+  const pm = parcelMkrs.find(x => x.cn === cn);
+  if (pm && pm.layer) {
+    const bounds = pm.layer.getBounds ? pm.layer.getBounds() : pm.layer.getLatLng().toBounds(100);
+    map.fitBounds(bounds, { padding: [60, 60], maxZoom: 17 });
+    if (pm.layer.setStyle) pm.layer.setStyle({ ...pm.origStyle, color: '#3b82f6', weight: 3.5, fillOpacity: 0.45 });
   }
   const card = document.getElementById('card-' + cn.replace(/\W/g,'_'));
-  if (card) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  if (card) { card.classList.add('selected'); card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+  const p = foundParcels.find(x => x.cn === cn);
+  if (p) showParcelInfo(p);
+}
+
+function closeParcelInfo() {
+  const panel = document.getElementById('parcel-info-panel');
+  if (panel) panel.style.display = 'none';
+  if (selectedParcelCn) {
+    const pm = parcelMkrs.find(x => x.cn === selectedParcelCn);
+    if (pm && pm.layer && pm.layer.setStyle) pm.layer.setStyle(pm.origStyle);
+    const card = document.getElementById('card-' + selectedParcelCn.replace(/\W/g,'_'));
+    if (card) card.classList.remove('selected');
+    selectedParcelCn = null;
+  }
+}
+
+function showParcelInfo(p) {
+  const panel = document.getElementById('parcel-info-panel');
+  if (!panel) return;
+  const badge = p.inP
+    ? '<span class="pi-badge inside">✓ Внутри СЗЗ</span>'
+    : '<span class="pi-badge cross">⚠ Касается СЗЗ</span>';
+  const row = (key, val, cls = '') => val
+    ? `<div class="pi-row"><div class="pi-key">${key}</div><div class="pi-val${cls?' '+cls:''}">${val}</div></div>`
+    : '';
+  const sec = (title) => `<div class="pi-section">${title}</div>`;
+  panel.innerHTML = `
+    <div class="pi-header">
+      <div class="pi-title-block">
+        <div class="pi-type">Земельный участок</div>
+        <div class="pi-cn">${p.cn}</div>
+        ${badge}
+      </div>
+      <button class="pi-close" onclick="closeParcelInfo()" title="Закрыть">✕</button>
+    </div>
+    <div class="pi-body">
+      ${sec('Расположение')}
+      ${row('Кадастровый квартал', p.kvartal, 'mono')}
+      ${row('Адрес', p.addr || 'не указан')}
+      ${row('Координаты центра', p.lat ? `${p.lat.toFixed(6)}°, ${p.lon.toFixed(6)}°` : '')}
+      ${sec('Характеристики')}
+      ${row('Площадь', p.area)}
+      ${row('Дата постановки на учёт', p.date_cn)}
+      ${row('Статус', p.status)}
+      ${row('Категория земель', p.cat)}
+      ${row('Вид разрешённого использования', p.util)}
+      ${row('Форма собственности', p.ownership)}
+      ${row('Функциональная зона', p.zone)}
+      ${p.cad_cost || p.cad_unit ? sec('Кадастровая оценка') : ''}
+      ${row('Кадастровая стоимость', p.cad_cost, 'cost')}
+      ${row('Удельный показатель', p.cad_unit)}
+    </div>
+    <div class="pi-footer">
+      <a class="pi-link" href="https://nspd.gov.ru/map?thematic=PKK" target="_blank" rel="noopener">Открыть на карте НСПД ↗</a>
+    </div>`;
+  panel.style.display = 'flex';
 }
 
 function addParcelLayer(p) {
   let layer;
+  const tip = p.cn + (p.addr ? '\n' + p.addr : '');
   if (p.geometry && p.geometry.type && p.geometry.type !== 'Point') {
     try {
       const coords = p.geometry.type === 'Polygon'
@@ -650,17 +718,22 @@ function addParcelLayer(p) {
       const style = p.inP
         ? { color: '#16a34a', fillColor: '#22c55e', fillOpacity: 0.25, weight: 2 }
         : { color: '#b45309', fillColor: '#f59e0b', fillOpacity: 0.2, weight: 2 };
-      layer = L.polygon(coords, style).addTo(map);
-      parcelMkrs.push({ cn: p.cn, layer, origStyle: style });
+      layer = L.polygon(coords, style)
+        .bindTooltip(tip, { sticky: true, className: 'parcel-tip' })
+        .on('click', e => { L.DomEvent.stopPropagation(e); selectParcel(p.cn); })
+        .addTo(map);
+      parcelMkrs.push({ cn: p.cn, layer, origStyle: { ...style } });
       return;
     } catch(e) {}
   }
   // fallback — маркер
   const color = p.inP ? '#22c55e' : '#f59e0b';
-  layer = L.circleMarker([p.lat, p.lon], {
-    radius: 6, color, fillColor: color, fillOpacity: 0.5, weight: 2,
-  }).bindTooltip(p.cn).addTo(map);
-  parcelMkrs.push({ cn: p.cn, layer, origStyle: { color, fillColor: color, fillOpacity: 0.5, weight: 2 } });
+  const origStyle = { color, fillColor: color, fillOpacity: 0.5, weight: 2 };
+  layer = L.circleMarker([p.lat, p.lon], { radius: 6, ...origStyle })
+    .bindTooltip(tip, { sticky: true })
+    .on('click', e => { L.DomEvent.stopPropagation(e); selectParcel(p.cn); })
+    .addTo(map);
+  parcelMkrs.push({ cn: p.cn, layer, origStyle });
 }
 
 function toggleFills() {
