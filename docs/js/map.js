@@ -166,16 +166,30 @@ function undoPolyPt() {
 function buildFromCoords() {
   const raw = document.getElementById('coords-input').value.trim();
   if (!raw) return;
-  const pts = [];
+
+  // Парсим пары чисел (разделитель: пробел / запятая / точка с запятой / таб)
+  const pairs = [];
   for (const line of raw.split('\n')) {
-    const parts = line.trim().split(/[\s,;]+/);
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const parts = trimmed.split(/[\s,;]+/);
     if (parts.length >= 2) {
-      const lat = parseFloat(parts[0]), lon = parseFloat(parts[1]);
-      if (!isNaN(lat) && !isNaN(lon)) pts.push([lat, lon]);
+      const a = parseFloat(parts[0]), b = parseFloat(parts[1]);
+      if (!isNaN(a) && !isNaN(b)) pairs.push([a, b]);
     }
   }
-  if (pts.length < 3) { setSt('Нужно минимум 3 точки', 'err'); return; }
+  if (pairs.length < 3) { setSt('Нужно минимум 3 точки', 'err'); return; }
 
+  // Автоопределение CRS и конвертация → WGS-84
+  const result = autoConvertCoords(pairs);
+
+  if (!result.ok) {
+    setSt(result.msg, 'err');
+    _setCoordsHint(result.msg, 'err');
+    return;
+  }
+
+  const pts = result.pts;
   const cfg = getStyleCfg();
   const ll  = pts.map(p => L.latLng(p[0], p[1]));
   const layer = L.polygon(ll, {
@@ -186,7 +200,28 @@ function buildFromCoords() {
   addMapLayer('parcel', `Участок ${mapLayers.filter(l => l.type === 'parcel').length + 1}`, pts, layer);
   map.fitBounds(layer.getBounds(), { padding: [40, 40] });
   document.getElementById('coords-input').value = '';
-  setSt(`Построен участок из ${pts.length} точек`, 'ok');
+
+  const crsLabel = { wgs84: 'WGS-84', sk42: 'СК-42 → WGS-84', msk: 'МСК' }[result.crs] || result.crs;
+  setSt(`Построен участок из ${pts.length} точек (${crsLabel})`, 'ok');
+  _setCoordsHint(`✓ ${crsLabel}, ${pts.length} точек`, 'ok');
+}
+
+/** Обновляет подсказку под полем координат */
+function _setCoordsHint(msg, type) {
+  let hint = document.getElementById('coords-crs-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'coords-crs-hint';
+    hint.style.cssText = 'font-size:11px;margin-top:4px;padding:3px 6px;border-radius:4px;';
+    const btn = document.querySelector('#params-coords .btn');
+    if (btn) btn.parentNode.insertBefore(hint, btn);
+  }
+  const colors = { ok: '#16a34a', err: '#dc2626', info: '#6b7280' };
+  const bg     = { ok: '#f0fdf4', err: '#fef2f2', info: '#f1f5f9' };
+  hint.textContent  = msg;
+  hint.style.color  = colors[type] || colors.info;
+  hint.style.background = bg[type] || bg.info;
+  hint.style.display = 'block';
 }
 
 // ── Генерация СЗЗ ────────────────────────────────
@@ -209,6 +244,57 @@ function generateSzz() {
 
   addMapLayer('szz', `СЗЗ ${cfg.buffer}м`, bufPts, layer, al.id);
   setSt(`СЗЗ ${cfg.buffer}м построена`, 'ok');
+}
+
+// ── Вырезать исходный ЗУ из СЗЗ ─────────────────
+function cutSourceParcel() {
+  // Ищем активный слой СЗЗ
+  const szzLayer = mapLayers.find(l => l.id === activeLayerId && l.type === 'szz')
+                || mapLayers.find(l => l.type === 'szz');
+  if (!szzLayer) { setSt('Нет слоя СЗЗ — сначала постройте СЗЗ', 'err'); return; }
+
+  // Исходный ЗУ — родительский слой СЗЗ или первый parcel
+  const parcelLayer = mapLayers.find(l => l.id === szzLayer.parentId && l.type === 'parcel')
+                   || mapLayers.find(l => l.type === 'parcel');
+  if (!parcelLayer) { setSt('Нет исходного ЗУ для вырезания', 'err'); return; }
+
+  try {
+    // Строим turf-полигоны (координаты в [lon, lat])
+    const szzRing = szzLayer.poly.map(p => [p[1], p[0]]);
+    if (szzRing[0][0] !== szzRing[szzRing.length-1][0]) szzRing.push([...szzRing[0]]);
+    const parcelRing = parcelLayer.poly.map(p => [p[1], p[0]]);
+    if (parcelRing[0][0] !== parcelRing[parcelRing.length-1][0]) parcelRing.push([...parcelRing[0]]);
+
+    const szzTurf    = turf.polygon([szzRing]);
+    const parcelTurf = turf.polygon([parcelRing]);
+
+    // Вычитаем ЗУ из СЗЗ
+    const result = turf.difference(turf.featureCollection([szzTurf, parcelTurf]));
+    if (!result) { setSt('Участок не пересекается с СЗЗ', 'err'); return; }
+
+    // Удаляем старый слой СЗЗ с карты
+    map.removeLayer(szzLayer.layer);
+    const idx = mapLayers.findIndex(l => l.id === szzLayer.id);
+    if (idx !== -1) mapLayers.splice(idx, 1);
+
+    // Создаём новый слой с вырезанной геометрией
+    const cfg = getStyleCfg();
+    const newLayer = L.geoJSON(result, {
+      style: {
+        color: '#c084fc', weight: cfg.szzW,
+        fillColor: '#c084fc', fillOpacity: 0.1,
+        dashArray: dashByType(cfg.lineType),
+      },
+    }).addTo(map);
+
+    // poly для совместимости (берём первый контур)
+    const newPoly = result.geometry.coordinates[0].map(c => [c[1], c[0]]);
+    addMapLayer('szz', szzLayer.name + ' (вырез.)', newPoly, newLayer, szzLayer.parentId);
+
+    setSt('Исходный ЗУ вырезан из СЗЗ ✓', 'ok');
+  } catch(e) {
+    setSt('Ошибка вырезания: ' + e.message, 'err');
+  }
 }
 
 // ── Управление слоями ────────────────────────────
@@ -428,8 +514,11 @@ function clearMarkers() {
 }
 function updateButtons() {
   const al = getActiveLayer();
-  document.getElementById('btn-gen-szz').disabled = !(al && al.type === 'parcel');
-  document.getElementById('btn-search').disabled  = !(al && al.type === 'szz');
+  document.getElementById('btn-gen-szz').disabled  = !(al && al.type === 'parcel');
+  document.getElementById('btn-search').disabled   = !(al && al.type === 'szz');
+  const hasSzz = mapLayers.some(l => l.type === 'szz');
+  const cutBtn = document.getElementById('btn-cut-source');
+  if (cutBtn) cutBtn.disabled = !hasSzz;
 }
 function fitActive() {
   const al = getActiveLayer();

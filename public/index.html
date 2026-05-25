@@ -47,7 +47,11 @@
           </div>
         </div>
         <div id="params-coords" style="display:none">
-          <textarea id="coords-input" placeholder="59.123456, 39.654321&#10;59.124000, 39.655000&#10;..."></textarea>
+          <div class="hint" style="margin-bottom:4px">
+            WGS-84 (градусы) или СК-42 (метры) — формат определяется автоматически.<br>
+            Каждая строка: <code>X Y</code> или <code>широта, долгота</code>
+          </div>
+          <textarea id="coords-input" placeholder="WGS-84:&#10;59.123456  39.654321&#10;59.124000  39.655000&#10;&#10;СК-42:&#10;6257895  7548320&#10;6258100  7548800&#10;..."></textarea>
           <button class="btn" onclick="buildFromCoords()">✓ Построить</button>
         </div>
       </div>
@@ -71,6 +75,11 @@
           <input type="number" id="parcel-line-width" value="2" min="1" max="12">
         </div>
         <button class="btn pri" id="btn-gen-szz" onclick="generateSzz()" disabled>⊙ Построить СЗЗ</button>
+        <button class="btn" id="btn-cut-source" onclick="cutSourceParcel()" disabled
+                style="border-color:#34d399;color:#34d399;background:rgba(52,211,153,0.07);margin-top:4px"
+                title="Вычитает исходный ЗУ из контура СЗЗ">
+          ✂ Вырезать исходный ЗУ из СЗЗ
+        </button>
       </div>
 
       <!-- Слои -->
@@ -141,6 +150,7 @@
           <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Word</button>
         </div>
         <button class="btn" onclick="openSourcesModal()" style="margin-top:5px;border-color:#f59e0b;color:#fbbf24;background:#1c1003">📍 Источники</button>
+        <button class="btn" onclick="openCoordsConverter()" style="margin-top:5px;border-color:#06b6d4;color:#67e8f9;background:#082030">🧭 Конвертер координат</button>
         <button class="btn" onclick="enterPdfMode()" style="margin-top:5px;border-color:#6366f1;color:#a5b4fc;background:#1e1b4b">📄 Карта PDF</button>
       </div>
 
@@ -239,43 +249,81 @@
 
       <!-- Панель добавления -->
       <div id="src-panel-add">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <!-- Строка 1: название + тип + геометрия -->
+        <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;margin-bottom:10px">
           <div>
-            <label style="font-size:11px;color:var(--tx2)">Название</label>
-            <input type="text" id="src-name" class="modal-input" placeholder="Источник 1">
+            <label style="font-size:11px;color:var(--tx2)">Название / ИЗА №</label>
+            <input type="text" id="src-name" class="modal-input" placeholder="ИЗА 1">
           </div>
           <div>
-            <label style="font-size:11px;color:var(--tx2)">Тип</label>
+            <label style="font-size:11px;color:var(--tx2)">Тип выброса</label>
             <select id="src-type" class="modal-input">
-              <option value="emission">💨 Выброс (атм.)</option>
+              <option value="emission">💨 Атм. выброс</option>
               <option value="noise">🔊 Шум</option>
               <option value="radiation">☢ Радиация</option>
               <option value="vibration">📳 Вибрация</option>
               <option value="other">📌 Прочее</option>
             </select>
           </div>
-        </div>
-        <div style="font-size:11px;color:var(--tx2);margin-bottom:6px">Координаты точечного источника (WGS-84):</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div>
-            <label style="font-size:11px;color:var(--tx2)">Широта (lat)</label>
-            <input type="number" id="src-lat" class="modal-input" placeholder="59.9343" step="0.000001">
-          </div>
-          <div>
-            <label style="font-size:11px;color:var(--tx2)">Долгота (lon)</label>
-            <input type="number" id="src-lon" class="modal-input" placeholder="30.3351" step="0.000001">
+            <label style="font-size:11px;color:var(--tx2)">Геометрия</label>
+            <select id="src-shape" class="modal-input" onchange="srcShapeChange()">
+              <option value="point">◉ Точечный</option>
+              <option value="line">— Линейный</option>
+              <option value="area">▭ Площадной</option>
+            </select>
           </div>
         </div>
-        <div style="font-size:11px;color:var(--tx2);margin-bottom:4px">Или линейный источник (4 координаты):</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">
-          <input type="number" id="src-lat2" class="modal-input" placeholder="lat2" step="0.000001">
-          <input type="number" id="src-lon2" class="modal-input" placeholder="lon2" step="0.000001">
-          <input type="number" id="src-lat3" class="modal-input" placeholder="lat3" step="0.000001">
-          <input type="number" id="src-lon3" class="modal-input" placeholder="lon3" step="0.000001">
+
+        <!-- Точка 1 (всегда) -->
+        <div id="src-pt1-row" style="margin-bottom:8px">
+          <div id="src-pt1-label" style="font-size:11px;color:var(--tx2);margin-bottom:4px">Координаты источника (WGS-84 или СК-42):</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Широта / X</label>
+              <input type="number" id="src-lat" class="modal-input" placeholder="59.9343" step="0.000001">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Долгота / Y</label>
+              <input type="number" id="src-lon" class="modal-input" placeholder="30.3351" step="0.000001">
+            </div>
+          </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+
+        <!-- Точка 2 (линейный / площадной) -->
+        <div id="src-pt2-row" style="display:none;margin-bottom:8px">
+          <div id="src-pt2-label" style="font-size:11px;color:var(--tx2);margin-bottom:4px">Точка 2:</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Широта / X</label>
+              <input type="number" id="src-lat2" class="modal-input" placeholder="59.9400" step="0.000001">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Долгота / Y</label>
+              <input type="number" id="src-lon2" class="modal-input" placeholder="30.3400" step="0.000001">
+            </div>
+          </div>
+        </div>
+
+        <!-- Точка 3 (линейный, необязательно) -->
+        <div id="src-pt3-row" style="display:none;margin-bottom:8px">
+          <div style="font-size:11px;color:var(--tx2);margin-bottom:4px">Точка 3 (необязательно):</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Широта / X</label>
+              <input type="number" id="src-lat3" class="modal-input" placeholder="59.9450" step="0.000001">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--tx2)">Долгота / Y</label>
+              <input type="number" id="src-lon3" class="modal-input" placeholder="30.3450" step="0.000001">
+            </div>
+          </div>
+        </div>
+
+        <!-- Радиус + цвет (скрывается для площадного) -->
+        <div id="src-radius-row" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
           <div>
-            <label style="font-size:11px;color:var(--tx2)">Радиус/Ширина зоны (м)</label>
+            <label style="font-size:11px;color:var(--tx2)">Радиус / Ширина зоны (м)</label>
             <input type="number" id="src-radius" class="modal-input" placeholder="50" min="0">
           </div>
           <div>
@@ -283,6 +331,7 @@
             <input type="color" id="src-color" value="#ef4444" style="width:100%;height:34px;border-radius:6px;border:1px solid var(--bd);cursor:pointer">
           </div>
         </div>
+
         <button class="btn pri" onclick="addSource()" style="width:100%">➕ Добавить на карту</button>
       </div>
 
@@ -309,6 +358,71 @@
           <button class="btn pri" onclick="importSourcesText()" style="flex:1">✓ Импортировать</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ КОНВЕРТЕР КООРДИНАТ ══ -->
+<div id="cc-modal" style="display:none;position:fixed;inset:0;z-index:99000;align-items:center;justify-content:center">
+  <div class="modal-bg" onclick="closeCoordsConverter()"></div>
+  <div class="modal" style="width:620px;max-width:96vw">
+    <div class="modal-hdr">
+      <h2>🧭 Конвертер координат</h2>
+      <button class="modal-close" onclick="closeCoordsConverter()">✕</button>
+    </div>
+    <div class="modal-body" style="padding:14px">
+
+      <!-- Ввод -->
+      <div style="display:flex;gap:6px;margin-bottom:5px">
+        <input type="text" id="cc-input" class="modal-input" style="flex:1;margin-top:0;font-family:monospace"
+          placeholder="Любой формат: 55.7558, 37.6173  /  55°45′21″N 37°37′02″E  /  6182610 7413198  /  37U 413250 6177000  /  ucftx3…"
+          oninput="ccAutoConvert()">
+        <button class="btn" id="cc-pick-btn" onclick="ccTogglePick()"
+          title="Выбрать точку на карте" style="width:auto;padding:0 12px;flex-shrink:0">📍 С карты</button>
+      </div>
+      <div id="cc-hint" style="font-size:10px;color:var(--tx2);min-height:14px;margin-bottom:8px">
+        ГГ · ГМС · ГМ · СК-42 ГК · МСК · UTM · MGRS · Geohash
+      </div>
+
+      <!-- МСК выбор (появляется при нескольких совпадениях) -->
+      <div id="cc-msk-area" style="display:none;align-items:center;gap:8px;margin-bottom:8px;background:var(--bg3);border:1px solid #f59e0b44;border-radius:6px;padding:6px 10px">
+        <span style="font-size:10px;color:#fbbf24;white-space:nowrap">МСК система:</span>
+        <select id="cc-msk-select" onchange="ccMSKChange()"
+          style="flex:1;background:var(--bg2);color:var(--tx);border:1px solid var(--bd);border-radius:4px;padding:3px 6px;font-size:11px">
+          <option value="">— выбрать МСК систему —</option>
+        </select>
+      </div>
+
+      <!-- Ошибка -->
+      <div id="cc-error" style="display:none;color:#ef4444;font-size:12px;padding:6px 0">
+        ⚠ Формат не распознан. Проверьте ввод.
+      </div>
+
+      <!-- Результаты -->
+      <div id="cc-output" style="display:none">
+        <div style="font-size:10px;font-weight:600;color:var(--tx2);letter-spacing:.06em;margin-bottom:6px;border-top:1px solid var(--bd);padding-top:8px">РЕЗУЛЬТАТ — нажмите ⎘ для копирования</div>
+        <div id="cc-rows"></div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn" onclick="ccShowOnMap()" style="flex:1">🎯 Показать на карте</button>
+          <button class="btn" onclick="ccAddSource()" style="flex:1;border-color:#f59e0b;color:#fbbf24">➕ Добавить источник</button>
+          <button class="btn warn" onclick="ccClearMarker()" style="flex:1">✕ Убрать метку</button>
+        </div>
+      </div>
+
+      <!-- Шпаргалка форматов -->
+      <details style="margin-top:10px">
+        <summary style="font-size:10px;color:var(--tx2);cursor:pointer;user-select:none">Примеры входных форматов</summary>
+        <div style="margin-top:6px;font-size:10px;font-family:monospace;color:var(--tx2);line-height:1.9;background:var(--bg3);padding:8px 10px;border-radius:6px;border:1px solid var(--bd)">
+          <b style="color:var(--tx)">WGS-84 (ГГ):</b>      55.755814, 37.617635<br>
+          <b style="color:var(--tx)">WGS-84 (ГМС):</b>     55°45'20.930"N 37°37'03.486"E<br>
+          <b style="color:var(--tx)">WGS-84 (ГМ):</b>      55°45.34883'N 37°37.05810'E<br>
+          <b style="color:var(--tx)">СК-42 ГК:</b>         6181234 7413198<br>
+          <b style="color:var(--tx)">UTM:</b>              37U 413869 6177247<br>
+          <b style="color:var(--tx)">MGRS:</b>             37U DB 13869 77247<br>
+          <b style="color:var(--tx)">Geohash:</b>          ucftx3bc9
+        </div>
+      </details>
+
     </div>
   </div>
 </div>
@@ -472,7 +586,9 @@
 <script src="js/utils.js"></script>
 <script src="js/map.js"></script>
 <script src="js/search.js"></script>
+<script src="js/nspd.js"></script>
 <script src="js/sources.js"></script>
+<script src="js/coords-converter.js"></script>
 <script src="js/pdf-editor.js"></script>
 <script src="js/export.js"></script>
 <script src="js/main.js"></script>
