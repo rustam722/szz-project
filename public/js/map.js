@@ -268,8 +268,8 @@ function cutSourceParcel() {
     const szzTurf    = turf.polygon([szzRing]);
     const parcelTurf = turf.polygon([parcelRing]);
 
-    // Вычитаем ЗУ из СЗЗ
-    const result = turf.difference(turf.featureCollection([szzTurf, parcelTurf]));
+    // Вычитаем ЗУ из СЗЗ (turf v6 API)
+    const result = turf.difference(szzTurf, parcelTurf);
     if (!result) { setSt('Участок не пересекается с СЗЗ', 'err'); return; }
 
     // Удаляем старый слой СЗЗ с карты

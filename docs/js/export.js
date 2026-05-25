@@ -1,35 +1,105 @@
 // ═══════════════════════════════════════════════
-// EXPORT.JS — экспорт CSV и Word
+// EXPORT.JS — CSV / Excel / Word
 // ═══════════════════════════════════════════════
 
 'use strict';
 
+// ── Скачивание файла (браузер + pywebview) ───────
+async function _download(blobOrUrl, filename) {
+  // Pywebview: используем Python API для диалога сохранения
+  if (window.pywebview?.api?.save_file) {
+    try {
+      let b64;
+      if (typeof blobOrUrl === 'string' && blobOrUrl.startsWith('data:')) {
+        b64 = blobOrUrl.split(',')[1];
+      } else if (blobOrUrl instanceof Blob) {
+        const buf = await blobOrUrl.arrayBuffer();
+        b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      } else {
+        // blob: URL → fetch → base64
+        const r   = await fetch(blobOrUrl);
+        const buf = await r.arrayBuffer();
+        b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      }
+      await window.pywebview.api.save_file(filename, b64);
+      return;
+    } catch(e) { console.warn('pywebview save failed, fallback:', e); }
+  }
+  // Браузер: обычная ссылка
+  const url = blobOrUrl instanceof Blob ? URL.createObjectURL(blobOrUrl) : blobOrUrl;
+  const a   = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); if (blobOrUrl instanceof Blob) URL.revokeObjectURL(url); }, 1000);
+}
+
+function _today() { return new Date().toISOString().slice(0,10); }
+
+// ── CSV ──────────────────────────────────────────
 function exportCSV() {
   if (!foundParcels.length) return;
   const rows = [['№','Кадастровый номер','Адрес','Категория земель','Разрешенное использование','Площадь','Широта','Долгота','В СЗЗ','Функциональная зона']];
   foundParcels.forEach((r, i) => rows.push([
     i+1, r.cn, r.addr, r.cat, r.util, r.area,
-    r.lat.toFixed(6), r.lon.toFixed(6),
+    (r.lat||'').toFixed ? r.lat.toFixed(6) : r.lat,
+    (r.lon||'').toFixed ? r.lon.toFixed(6) : r.lon,
     r.inP ? 'да' : 'пересечение', r.zone || ''
   ]));
   const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g,'""')}"`).join(',')).join('\r\n');
-  _download('data:text/csv;charset=utf-8,' + encodeURIComponent('\uFEFF' + csv),
-    `szz_parcels_${_today()}.csv`);
+  _download('data:text/csv;charset=utf-8,' + encodeURIComponent('﻿' + csv), `szz_parcels_${_today()}.csv`);
 }
 
+// ── Excel (XLSX) ─────────────────────────────────
+async function exportExcel() {
+  if (!foundParcels.length) return;
+  if (!window.XLSX) { alert('Библиотека XLSX загружается, попробуйте через секунду'); return; }
+
+  const btn = document.getElementById('btn-export-excel');
+  if (btn) { btn.textContent = '⏳…'; btn.disabled = true; }
+
+  try {
+    const header = ['№','Кадастровый номер','Адрес','Категория земель',
+                    'Разрешенное использование','Площадь','Широта','Долгота','В СЗЗ','Функциональная зона'];
+    const data = [header, ...foundParcels.map((r, i) => [
+      i+1, r.cn, r.addr, r.cat, r.util, r.area,
+      (r.lat||'').toFixed ? +r.lat.toFixed(6) : r.lat,
+      (r.lon||'').toFixed ? +r.lon.toFixed(6) : r.lon,
+      r.inP ? 'да' : 'пересечение', r.zone || ''
+    ])];
+
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    // Ширина столбцов
+    ws['!cols'] = [4,18,30,22,30,10,12,12,14,20].map(w => ({ wch: w }));
+    // Заголовок жирный
+    header.forEach((_, ci) => {
+      const cell = ws[XLSX.utils.encode_cell({ r:0, c:ci })];
+      if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: 'BDD7EE' } } };
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Участки в СЗЗ');
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    await _download(new Blob([wbout], { type: 'application/octet-stream' }), `szz_parcels_${_today()}.xlsx`);
+    setSt(`Excel экспортирован: ${foundParcels.length} участков`, 'ok');
+  } catch(e) {
+    console.error('Excel export:', e);
+    alert('Ошибка Excel: ' + e.message);
+  }
+  if (btn) { btn.textContent = '⬇ Excel'; btn.disabled = false; }
+}
+
+// ── Word (DOCX) ──────────────────────────────────
 async function exportWord() {
   if (!foundParcels.length) return;
   if (!window.docx) { alert('Библиотека docx загружается, подождите...'); return; }
 
   const btn = document.getElementById('btn-export-word');
-  btn.textContent = '⏳…'; btn.disabled = true;
+  if (btn) { btn.textContent = '⏳…'; btn.disabled = true; }
 
   try {
     const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
             AlignmentType, WidthType, BorderStyle, ShadingType, VerticalAlign,
             PageOrientation } = window.docx;
 
-    // Центр СЗЗ для расчёта направлений
     const al = getActiveLayer();
     let cLat = 0, cLon = 0;
     if (al && al.poly) {
@@ -47,7 +117,6 @@ async function exportWord() {
     ];
     const grouped = {};
     DIR_ORDER.forEach(d => grouped[d] = []);
-
     foundParcels.forEach(p => {
       const dir = bearingToDir(getBearing(p.lat, p.lon, cLat, cLon));
       grouped[dir].push(p);
@@ -129,22 +198,11 @@ async function exportWord() {
 
     const buf  = await Packer.toBuffer(doc);
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    const url  = URL.createObjectURL(blob);
-    _download(url, `szz_parcels_${_today()}.docx`);
-    URL.revokeObjectURL(url);
+    await _download(blob, `szz_parcels_${_today()}.docx`);
     setSt(`Word экспортирован: ${foundParcels.length} участков`, 'ok');
   } catch(e) {
     console.error('Word export:', e);
-    alert('Ошибка экспорта: ' + e.message);
+    alert('Ошибка экспорта Word: ' + e.message);
   }
-  btn.textContent = '⬇ Word'; btn.disabled = false;
-}
-
-function _download(href, filename) {
-  const a = document.createElement('a');
-  a.href = href; a.download = filename; a.click();
-}
-
-function _today() {
-  return new Date().toISOString().slice(0,10);
+  if (btn) { btn.textContent = '⬇ Word'; btn.disabled = false; }
 }

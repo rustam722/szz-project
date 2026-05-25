@@ -147,7 +147,8 @@
         </div>
         <div style="display:flex;gap:5px;margin-top:6px">
           <button class="btn" id="btn-export" onclick="exportCSV()" disabled style="flex:1">⬇ CSV</button>
-          <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Word</button>
+          <button class="btn" id="btn-export-excel" onclick="exportExcel()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Excel</button>
+          <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#3b82f6;color:#93c5fd">⬇ Word</button>
         </div>
         <button class="btn" onclick="openSourcesModal()" style="margin-top:5px;border-color:#f59e0b;color:#fbbf24;background:#1c1003">📍 Источники</button>
         <button class="btn" onclick="openCoordsConverter()" style="margin-top:5px;border-color:#06b6d4;color:#67e8f9;background:#082030">🧭 Конвертер координат</button>
@@ -561,8 +562,9 @@
     }
 
     renderLayers(); updateButtons();
-    document.getElementById('btn-export').disabled      = !foundParcels.length;
-    document.getElementById('btn-export-word').disabled = !foundParcels.length;
+    document.getElementById('btn-export').disabled       = !foundParcels.length;
+    document.getElementById('btn-export-excel').disabled = !foundParcels.length;
+    document.getElementById('btn-export-word').disabled  = !foundParcels.length;
     document.getElementById('res-cnt').textContent      = inside.length;
     setSt(`Проект «${p.name}» загружен`, 'ok');
   };
@@ -583,6 +585,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/map.js"></script>
 <script src="js/search.js"></script>
