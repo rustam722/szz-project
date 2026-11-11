@@ -674,8 +674,29 @@
 
 /* Объекты «Фигура» */
 .ps-obj-rect, .ps-obj-ellipse { overflow: visible; }
-.ps-obj-ellipse { border-radius: 50% !important; }
-.ps-obj-line { overflow: visible; }
+.ps-obj-ellipse { overflow: visible; }
+.ps-obj-line, .ps-obj-triangle, .ps-obj-diamond, .ps-obj-star { overflow: visible; }
+
+/* Мульти-выделение (rubber band) */
+#pdf-multi-sel-box {
+  position: absolute;
+  border: 2px dashed #3b82f6;
+  background: rgba(59,130,246,0.08);
+  pointer-events: none;
+  z-index: 10000;
+  display: none;
+}
+
+/* Маркер группы */
+.ps-obj.ps-grouped::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1px dashed rgba(139,92,246,0.6);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 1;
+}
 
 /* Прорисовка при drag-to-draw */
 #ps-draw-ghost {

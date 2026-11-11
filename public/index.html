@@ -124,6 +124,35 @@
         </div>
       </div>
 
+      <!-- Операции с полигонами -->
+      <div class="params" id="poly-ops-panel" style="display:none">
+        <div class="prow" style="margin-bottom:4px">
+          <span style="font-weight:600;color:var(--tx);font-size:12px">⚙ Операции с полигонами</span>
+        </div>
+        <select id="poly-op-select" style="width:100%;background:var(--bg3);border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:5px 8px;font-size:11px;margin-bottom:5px"></select>
+        <div style="display:flex;gap:3px">
+          <button class="btn" onclick="polyUnion()" title="Объединить (A ∪ B)" style="flex:1;font-size:10px;padding:4px 0">∪ Объед.</button>
+          <button class="btn" onclick="polyDifference()" title="Вычесть (A − B)" style="flex:1;font-size:10px;padding:4px 0">− Вычесть</button>
+          <button class="btn" onclick="polyIntersect()" title="Пересечение (A ∩ B)" style="flex:1;font-size:10px;padding:4px 0">∩ Пересеч.</button>
+        </div>
+      </div>
+
+      <!-- Импорт слоёв НСПД -->
+      <div class="params">
+        <div class="prow" style="margin-bottom:4px">
+          <span style="font-weight:600;color:var(--tx);font-size:12px">🗺 Импорт слоёв НСПД</span>
+        </div>
+        <select id="nspd-layer-select" style="width:100%;background:var(--bg3);border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:5px 8px;font-size:11px;margin-bottom:5px">
+          <option value="kvartal">Кадастровые кварталы</option>
+          <option value="oks">Здания (ОКС)</option>
+          <option value="zouit">ЗОУИТ</option>
+          <option value="pzz">Терр. зоны (ПЗЗ)</option>
+          <option value="red_line">Красные линии</option>
+          <option value="settlement">Населённые пункты</option>
+        </select>
+        <button class="btn" id="btn-nspd-import" onclick="importNspdLayer()" style="width:100%;font-size:11px">⬇ Импортировать в границах активного слоя</button>
+      </div>
+
       <!-- Поиск -->
       <div class="params">
         <div class="prow" style="margin-bottom:6px">
@@ -150,6 +179,7 @@
           <button class="btn" id="btn-export-excel" onclick="exportExcel()" disabled style="flex:1;border-color:#166534;color:#4ade80">⬇ Excel</button>
           <button class="btn" id="btn-export-word" onclick="exportWord()" disabled style="flex:1;border-color:#3b82f6;color:#93c5fd">⬇ Word</button>
         </div>
+        <button class="btn" onclick="exportGeoJSON()" style="margin-top:4px;border-color:#0891b2;color:#67e8f9;background:#0c2230">⬇ GeoJSON</button>
         <button class="btn" onclick="openSourcesModal()" style="margin-top:5px;border-color:#f59e0b;color:#fbbf24;background:#1c1003">📍 Источники</button>
         <button class="btn" onclick="openCoordsConverter()" style="margin-top:5px;border-color:#06b6d4;color:#67e8f9;background:#082030">🧭 Конвертер координат</button>
         <button class="btn" onclick="enterPdfMode()" style="margin-top:5px;border-color:#6366f1;color:#a5b4fc;background:#1e1b4b">📄 Карта PDF</button>
@@ -576,6 +606,40 @@
     const projects = _getProjects().filter(p => p.id !== id);
     _saveProjects(projects);
     _renderProjectsList();
+  };
+
+  // ── Автосохранение в открытый проект ──────────
+  // Без этого любые изменения (группировка объектов в PDF-редакторе,
+  // новые слои и т.д.) живут только в автосохранении localStorage
+  // и теряются, если потом открыть именованный проект заново —
+  // loadProject() перезатирает их старой сохранённой версией.
+  let _autoSaveTimer = null;
+  window._autoSaveCurrentProject = () => {
+    if (!currentProjectId) return;
+    clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(() => {
+      const projects = _getProjects();
+      const idx = projects.findIndex(p => p.id === currentProjectId);
+      if (idx === -1) return;
+
+      const layers = mapLayers.map(l => ({
+        id: l.id, type: l.type, name: l.name, poly: l.poly,
+        visible: l.visible, color: l.color, _psStyle: l._psStyle || null,
+      }));
+      const pdfObjs = pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: '' } }));
+
+      projects[idx] = {
+        ...projects[idx],
+        layers,
+        pdfObjects: pdfObjs,
+        pdfOrientation,
+        foundParcels: foundParcels.slice(0, 300),
+        layerCount: layers.length,
+        parcelCount: foundParcels.length,
+        updatedAt: Date.now(),
+      };
+      _saveProjects(projects);
+    }, 600);
   };
 
   window._getCurrentUser = () => null;
