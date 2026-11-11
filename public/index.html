@@ -128,6 +128,22 @@
         </div>
       </div>
 
+      <!-- Импорт слоёв НСПД -->
+      <div class="params">
+        <div class="prow" style="margin-bottom:4px">
+          <span style="font-weight:600;color:var(--tx);font-size:12px">🗺 Импорт слоёв НСПД</span>
+        </div>
+        <select id="nspd-layer-select" style="width:100%;background:var(--bg3);border:1px solid var(--bd);border-radius:6px;color:var(--tx);padding:5px 8px;font-size:11px;margin-bottom:5px">
+          <option value="kvartal">Кадастровые кварталы</option>
+          <option value="oks">Здания (ОКС)</option>
+          <option value="zouit">ЗОУИТ</option>
+          <option value="pzz">Терр. зоны (ПЗЗ)</option>
+          <option value="red_line">Красные линии</option>
+          <option value="settlement">Населённые пункты</option>
+        </select>
+        <button class="btn" id="btn-nspd-import" onclick="importNspdLayer()" style="width:100%;font-size:11px">⬇ Импортировать в границах активного слоя</button>
+      </div>
+
       <!-- Поиск -->
       <div class="params">
         <div class="prow" style="margin-bottom:6px">
@@ -472,6 +488,40 @@
     const projects = _getProjects().filter(p => p.id !== id);
     _saveProjects(projects);
     _renderProjectsList();
+  };
+
+  // ── Автосохранение в открытый проект ──────────
+  // Без этого любые изменения (группировка объектов в PDF-редакторе,
+  // новые слои и т.д.) живут только в автосохранении localStorage
+  // и теряются, если потом открыть именованный проект заново —
+  // loadProject() перезатирает их старой сохранённой версией.
+  let _autoSaveTimer = null;
+  window._autoSaveCurrentProject = () => {
+    if (!currentProjectId) return;
+    clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(() => {
+      const projects = _getProjects();
+      const idx = projects.findIndex(p => p.id === currentProjectId);
+      if (idx === -1) return;
+
+      const layers = mapLayers.map(l => ({
+        id: l.id, type: l.type, name: l.name, poly: l.poly,
+        visible: l.visible, color: l.color, _psStyle: l._psStyle || null,
+      }));
+      const pdfObjs = pdfObjects.map(o => ({ ...o, data: { ...o.data, imgSrc: '' } }));
+
+      projects[idx] = {
+        ...projects[idx],
+        layers,
+        pdfObjects: pdfObjs,
+        pdfOrientation,
+        foundParcels: foundParcels.slice(0, 300),
+        layerCount: layers.length,
+        parcelCount: foundParcels.length,
+        updatedAt: Date.now(),
+      };
+      _saveProjects(projects);
+    }, 600);
   };
 
   window._getCurrentUser = () => null;

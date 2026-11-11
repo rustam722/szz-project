@@ -110,6 +110,24 @@ def looks_like_placeholder(value: str) -> bool:
     )
 
 
+# Слои НСПД, доступные для импорта (кроме ЗУ — у него свой быстрый путь
+# через search_landplots_in_contour). Названия — точные title'ы из pynspd.
+LAYER_TITLES = {
+    "kvartal": ["Кадастровые кварталы"],
+    "oks": ["Здания"],
+    "zouit": [
+        "ЗОУИТ объектов культурного наследия",
+        "ЗОУИТ объектов энергетики, связи, транспорта",
+        "ЗОУИТ природных территорий",
+        "ЗОУИТ охраняемых объектов и безопасности",
+        "Иные ЗОУИТ",
+    ],
+    "pzz": ["Территориальные зоны"],
+    "red_line": ["Красные линии "],  # пробел в конце — часть реального title в НСПД
+    "settlement": ["Населённые пункты (полигоны)"],
+}
+
+
 def _load_pynspd():
     src_path = Path(PYNSPD_SRC_PATH)
     if not src_path.exists():
@@ -122,14 +140,76 @@ def _load_pynspd():
 
     try:
         from shapely import Polygon
-        from pynspd import Nspd
+        from pynspd import Nspd, NspdFeature
     except Exception as exc:
         raise RuntimeError(
             "Cannot import pynspd/shapely. Install dependencies:\n"
             "  pip install -e /Users/rustam/Downloads/pynspd-main"
         ) from exc
 
-    return Nspd, Polygon
+    return Nspd, Polygon, NspdFeature
+
+
+def _landplot_row(feat) -> Dict:
+    props = feat.properties.options
+    cad_num = getattr(props, "cad_num", None) or getattr(props, "cn", None) or ""
+    addr = getattr(props, "readable_address", "") or ""
+    area_val = getattr(props, "specified_area", None) or getattr(props, "declared_area", None)
+    area = str(area_val) if area_val is not None else ""
+    center = feat.geometry.to_shape().centroid
+    return {
+        "attrs": {
+            "cn": cad_num,
+            "id": cad_num,
+            "address": addr,
+            "area_value": area,
+            "area_unit": "м²" if area else "",
+            "category_type": "Земельный участок",
+        },
+        "center": {"x": center.x, "y": center.y},
+        "geometry": feat.geometry.model_dump(mode="json", by_alias=True),
+    }
+
+
+def _generic_row(feat, layer_title: str) -> Dict:
+    props = feat.properties.options
+    cad_num = getattr(props, "cad_num", None) or getattr(props, "cn", None) or ""
+    name = (
+        getattr(props, "name", None)
+        or getattr(props, "readable_address", None)
+        or getattr(props, "oktmo_name", None)
+        or cad_num
+        or layer_title
+    )
+    addr = getattr(props, "readable_address", "") or ""
+    area_val = (
+        getattr(props, "specified_area", None)
+        or getattr(props, "declared_area", None)
+        or getattr(props, "area", None)
+    )
+    area = str(area_val) if area_val is not None else ""
+    try:
+        center = feat.geometry.to_shape().centroid
+        center_dict = {"x": center.x, "y": center.y}
+    except Exception:
+        center_dict = {}
+    try:
+        geometry = feat.geometry.model_dump(mode="json", by_alias=True)
+    except Exception:
+        geometry = None
+    return {
+        "attrs": {
+            "cn": cad_num or name,
+            "id": cad_num or name,
+            "name": name,
+            "address": addr,
+            "area_value": area,
+            "area_unit": "м²" if area else "",
+            "category_type": layer_title,
+        },
+        "center": center_dict,
+        "geometry": geometry,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -191,10 +271,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._proxy_pkk_via_upstream(raw_query)
 
     def _proxy_pkk_via_pynspd(self, raw_query: str) -> Tuple[bytes, int]:
-        Nspd, Polygon = _load_pynspd()
+        Nspd, Polygon, NspdFeature = _load_pynspd()
         incoming = parse_qs(raw_query, keep_blank_values=True)
         sq_raw = incoming.get("sq", [""])[-1]
         bbox_raw = incoming.get("bbox", [""])[-1]
+        layer_key = (incoming.get("layer", ["zu"])[-1] or "zu").strip()
 
         if sq_raw:
             # Polygon mode: sq={"type":"Polygon","coordinates":[...]}
@@ -232,31 +313,24 @@ class Handler(BaseHTTPRequestHandler):
             client_dns_resolve=dns_resolve,
             trust_env=True,
         ) as nspd:
-            feats = nspd.search_landplots_in_contour(contour) or []
-            for feat in feats:
-                props = feat.properties.options
-                cad_num = getattr(props, "cad_num", None) or getattr(props, "cn", None) or ""
-                addr = getattr(props, "readable_address", "") or ""
-                area_val = getattr(props, "specified_area", None) or getattr(props, "declared_area", None)
-                area = str(area_val) if area_val is not None else ""
-                center = feat.geometry.to_shape().centroid
-                rows.append(
-                    {
-                        "attrs": {
-                            "cn": cad_num,
-                            "id": cad_num,
-                            "address": addr,
-                            "area_value": area,
-                            "area_unit": "м²" if area else "",
-                            "category_type": "Земельный участок",
-                        },
-                        "center": {"x": center.x, "y": center.y},
-                        "geometry": feat.geometry.model_dump(mode="json", by_alias=True),
-                    }
-                )
+            if layer_key == "zu":
+                feats = nspd.search_landplots_in_contour(contour) or []
+                rows = [_landplot_row(feat) for feat in feats]
+            else:
+                titles = LAYER_TITLES.get(layer_key)
+                if not titles:
+                    raise ValueError(f"Unknown layer: {layer_key}")
+                for title in titles:
+                    try:
+                        layer_def = NspdFeature.by_title(title)
+                        feats = nspd.search_in_contour(contour, layer_def) or []
+                    except Exception as exc:
+                        print(f"[proxy] layer '{title}' search failed: {type(exc).__name__}: {exc}")
+                        continue
+                    rows.extend(_generic_row(feat, title) for feat in feats)
 
         body = json.dumps({"features": rows}, ensure_ascii=False).encode("utf-8")
-        print(f"[proxy] pynspd features={len(rows)}")
+        print(f"[proxy] pynspd layer={layer_key} features={len(rows)}")
         return body, 200
 
     def _proxy_pkk_via_upstream(self, raw_query: str) -> Tuple[bytes, int]:

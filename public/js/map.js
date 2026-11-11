@@ -256,6 +256,11 @@ function dashByType(t) {
 }
 
 function renderLayers() {
+  // Синхронизируем с открытым именованным проектом, иначе новые/удалённые
+  // слои теряются при повторном открытии проекта — loadProject() берёт
+  // старую сохранённую версию.
+  if (typeof window._autoSaveCurrentProject === 'function') window._autoSaveCurrentProject();
+
   const box = document.getElementById('layer-box');
   if (!mapLayers.length) {
     box.innerHTML = '<div class="empty">Нет слоёв. Нарисуй участок.</div>';

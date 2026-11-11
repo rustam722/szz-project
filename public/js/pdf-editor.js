@@ -2475,6 +2475,10 @@ function _saveState() {
     }));
     Store.set('pdfObjects', state);
     Store.set('pdfOrientation', pdfOrientation);
+    // Синхронизируем с открытым именованным проектом (если есть),
+    // иначе изменения (группы, новые объекты) теряются при повторном
+    // открытии проекта из списка — loadProject() берёт старую версию.
+    if (typeof window._autoSaveCurrentProject === 'function') window._autoSaveCurrentProject();
   } catch(e) {}
 }
 
